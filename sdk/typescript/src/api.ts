@@ -1,4 +1,5 @@
 /// <reference lib="esnext.disposable" preserve="true" />
+import { workbenchArgs } from "./workbench-arguments.js";
 
 import { isSafeNonNegativeInteger as safeInteger } from "./value.js";
 import {
@@ -1641,13 +1642,10 @@ export class CodexSecurity {
                     }
                     await workbench(
                       { ...activeScan.options, signal: budgetSignal },
-                      [
-                        "set-scan-cost-limit",
-                        "--scan-id",
-                        activeScan.id,
-                        "--max-cost-usd",
-                        String(next),
-                      ],
+                      workbenchArgs("set-scan-cost-limit", {
+                        scanId: activeScan.id,
+                        maxCostUsd: String(next),
+                      }),
                     );
                     if (budgetSignal.aborted) return;
                     maxCostUsd = next;
@@ -1714,20 +1712,13 @@ export class CodexSecurity {
             ])
           : await workbench(
               workbenchOptions,
-              [
-                "register-cli-scan",
-                "--repository",
-                repo,
-                "--scan-dir",
+              workbenchArgs("register-cli-scan", {
+                repository: repo,
                 scanDir,
-                "--registration-json-stdin",
-                ...(options.archiveExisting === true
-                  ? ["--archive-existing"]
-                  : []),
-                ...(options.parentScanId === undefined
-                  ? []
-                  : ["--parent-scan-id", options.parentScanId]),
-              ],
+                registrationJsonStdin: true,
+                archiveExisting: options.archiveExisting === true,
+                parentScanId: options.parentScanId,
+              }),
               JSON.stringify({
                 recipe,
                 userContext: options.scanPrompt,
@@ -1878,7 +1869,7 @@ export class CodexSecurity {
                 ...workbenchOptions,
                 signal: AbortSignal.any([signal, progressSignal]),
               },
-              ["get-scan", "--scan-id", scanId],
+              workbenchArgs("get-scan", { scanId }),
             ),
           onProgress: (progress) =>
             notifyObserver(options, "onDeepProgress")(progress),
@@ -2118,13 +2109,10 @@ export class CodexSecurity {
           if (budgetRecovery !== null) budgetRecovery.threadId = threadId;
           tracker.start(threadId);
           try {
-            await workbench(workbenchOptions, [
-              "set-scan-thread",
-              "--scan-id",
-              scanId,
-              "--thread-id",
-              threadId,
-            ]);
+            await workbench(
+              workbenchOptions,
+              workbenchArgs("set-scan-thread", { scanId, threadId }),
+            );
           } catch (error) {
             notifyObserver(
               options,
@@ -2206,17 +2194,15 @@ export class CodexSecurity {
           completionCost = snapshot.cost;
           let preparation: JsonObject;
           try {
-            preparation = await workbench(workbenchOptions, [
-              "prepare-scan-completion",
-              "--scan-id",
-              scanId,
-            ]);
+            preparation = await workbench(
+              workbenchOptions,
+              workbenchArgs("prepare-scan-completion", { scanId }),
+            );
           } catch (error) {
-            const saved = await workbench(workbenchOptions, [
-              "get-scan",
-              "--scan-id",
-              scanId,
-            ]).catch(() => null);
+            const saved = await workbench(
+              workbenchOptions,
+              workbenchArgs("get-scan", { scanId }),
+            ).catch(() => null);
             const savedScan = isRecord(saved) ? saved["scan"] : undefined;
             const progress = isRecord(savedScan)
               ? savedScan["progress"]
@@ -3381,18 +3367,13 @@ export class CodexSecurity {
       throwIfAborted(signal, scanDir);
       const registration = await workbench(
         workbenchOptions,
-        [
-          "register-cli-scan",
-          "--repository",
-          local.repository,
-          "--scan-dir",
+        workbenchArgs("register-cli-scan", {
+          repository: local.repository,
           scanDir,
-          "--registration-json-stdin",
-          ...(options.archiveExisting ? ["--archive-existing"] : []),
-          ...(options.parentScanId === undefined
-            ? []
-            : ["--parent-scan-id", options.parentScanId]),
-        ],
+          registrationJsonStdin: true,
+          archiveExisting: Boolean(options.archiveExisting),
+          parentScanId: options.parentScanId,
+        }),
         JSON.stringify({
           recipe: {
             ...scanRecipe({
@@ -3460,11 +3441,10 @@ export class CodexSecurity {
         output_tokens: 0,
       };
       const cost = estimateScanCost(model, usage);
-      await workbench(workbenchOptions, [
-        "prepare-scan-completion",
-        "--scan-id",
-        scanId,
-      ]);
+      await workbench(
+        workbenchOptions,
+        workbenchArgs("prepare-scan-completion", { scanId }),
+      );
       const completion = await workbench(workbenchOptions, [
         "complete-scan",
         "--scan-id",

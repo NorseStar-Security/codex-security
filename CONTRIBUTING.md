@@ -16,8 +16,9 @@ packages and releases. Do not edit or commit files in that directory. See the
 commands.
 
 `pnpm --dir sdk/typescript run generate:models` also copies shared finding
-normalization from the plugin source into the SDK. Edit the plugin helper, then
-regenerate its SDK copy. `pnpm --dir sdk/typescript run types` checks freshness.
+normalization and workbench argument encoding from the plugin source into the
+SDK. Edit the plugin helper, then regenerate its SDK copy.
+`pnpm --dir sdk/typescript run types` checks freshness.
 
 Model-based evaluations live in [`evals/`](evals/README.md), outside the plugin
 source. Deterministic triage checks and the MCP reducer IPC regression remain

@@ -1,3 +1,4 @@
+import { workbenchArgs } from "../workbench-arguments.js";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -135,28 +136,19 @@ export class WorkbenchDeepScanStore {
   }): Promise<DeepScanRunState> {
     const userContext = input.userContext;
     const result = await this.enqueueWrite(
-      [
-        "begin-deep-scan",
-        "--thread-id",
-        input.threadId,
-        ...(input.scanId ? ["--scan-id", input.scanId] : []),
-        ...(input.targetPath ? ["--target-path", input.targetPath] : []),
-        ...(input.scope ? ["--scope", input.scope] : []),
-        ...(userContext ? ["--user-context-stdin"] : []),
-        ...(input.handoffClaimToken
-          ? ["--claim-token", input.handoffClaimToken]
-          : []),
-        ...(input.model ? ["--model", input.model] : []),
-        ...(input.reasoningEffort
-          ? ["--reasoning-effort", input.reasoningEffort]
-          : []),
-        "--scan-root",
-        input.scanRoot,
-        "--available-parallelism",
-        String(availableParallelism()),
-        "--workflow-version",
-        WORKFLOW_VERSION,
-      ],
+      workbenchArgs("begin-deep-scan", {
+        threadId: input.threadId,
+        scanId: input.scanId || undefined,
+        targetPath: input.targetPath || undefined,
+        scope: input.scope || undefined,
+        userContextStdin: Boolean(userContext),
+        claimToken: input.handoffClaimToken || undefined,
+        model: input.model || undefined,
+        reasoningEffort: input.reasoningEffort || undefined,
+        scanRoot: input.scanRoot,
+        availableParallelism: String(availableParallelism()),
+        workflowVersion: WORKFLOW_VERSION,
+      }),
       false,
       userContext,
     );
@@ -172,13 +164,9 @@ export class WorkbenchDeepScanStore {
 
   async get(scanId: string, threadId: string): Promise<DeepScanRunState> {
     const run = parseDeepScan(
-      await this.runWorkbench([
-        "get-deep-scan",
-        "--scan-id",
-        scanId,
-        "--thread-id",
-        threadId,
-      ]),
+      await this.runWorkbench(
+        workbenchArgs("get-deep-scan", { scanId, threadId }),
+      ),
     );
     const generation =
       this.coordinatorLeases.get(scanId)?.run.coordinatorGeneration;
