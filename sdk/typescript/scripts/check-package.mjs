@@ -213,6 +213,7 @@ const allowedFiles = new Set([
     "deduplication/refusal",
     "deduplication/retry",
     "deduplication/deduplication",
+    "finding-normalization",
     "finding-retrieval",
     "finding-workflow",
     "findings-client",
