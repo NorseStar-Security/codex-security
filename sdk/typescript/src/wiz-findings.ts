@@ -188,33 +188,31 @@ function sourceBranch(
 ): string | null {
   const name = text(branch?.["name"]);
   if (!name) return null;
-  const qualifiers = [
-    ...new Set([
-      ...(repository.name ? [repository.name] : []),
-      ...inventoryNames,
-    ]),
-  ].sort((left, right) => right.length - left.length);
-  for (const qualifier of qualifiers) {
-    const prefix = qualifier + "/";
-    if (name.startsWith(prefix)) return name.slice(prefix.length) || null;
-  }
+  const qualifiers = [...inventoryNames];
+  if (repository.name) qualifiers.push(repository.name);
 
-  // URL-only metadata still identifies Wiz's repository-qualified branch name.
-  // Supported GitHub destinations use case-insensitive repository qualifiers.
-  // Preserve the branch suffix's case and slashes and the original evidence.
+  // Include the URL qualifier before selecting the longest repository prefix.
+  // Keep URL normalization and the branch suffix's original case and slashes.
   const repositoryKey = repositoryUrlKey(repository.url).toLowerCase();
   const url = /^(https?:\/\/[^/?#]+)\/([^?#]+)$/iu.exec(repositoryKey);
-  if (!url) return repository.name ? name : null;
-  const prefixParts = url[2]!.split("/").length;
-  const parts = name.split("/");
-  if (
-    parts.length > prefixParts &&
-    repositoryUrlKey(
-      url[1] + "/" + parts.slice(0, prefixParts).join("/"),
-    ).toLowerCase() === repositoryKey
-  )
-    return parts.slice(prefixParts).join("/") || null;
-  return name;
+  if (url) {
+    const prefixParts = url[2]!.split("/").length;
+    const parts = name.split("/");
+    const qualifier = parts.slice(0, prefixParts).join("/");
+    if (
+      parts.length > prefixParts &&
+      repositoryUrlKey(url[1] + "/" + qualifier).toLowerCase() === repositoryKey
+    )
+      qualifiers.push(qualifier);
+  }
+  for (const qualifier of qualifiers.sort(
+    (left, right) => right.length - left.length,
+  )) {
+    const prefix = qualifier + "/";
+    if (name.toLowerCase().startsWith(prefix.toLowerCase()))
+      return name.slice(prefix.length) || null;
+  }
+  return url || repository.name ? name : null;
 }
 
 function updatedAt(value: unknown, field: string): number | null {
