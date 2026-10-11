@@ -211,6 +211,7 @@
 - bump taiki-e/install-action from 2.87.23 to 2.87.24 ([#1597](https://github.com/openai/codex-security/pull/1597))
 - update PDF.js to 6.4.299 ([#1598](https://github.com/openai/codex-security/pull/1598))
 - update Ink to 8.0.0 ([#1599](https://github.com/openai/codex-security/pull/1599))
+- clarify persistent state and credential paths ([#1586](https://github.com/openai/codex-security/pull/1586))
 
 <!-- release-section: highlights:end -->
 
