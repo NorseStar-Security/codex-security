@@ -46,6 +46,14 @@ try {
     await testMissingReceiptRepair(root, { shared: true, reverse });
   for (const complete of [false, true])
     await testMissingReceiptRepair(root, { archived: false, complete });
+  for (const complete of [false, true])
+    for (const reverse of [false, true])
+      await testMissingReceiptRepair(root, {
+        archived: false,
+        shared: true,
+        complete,
+        reverse,
+      });
   await testSharedMissingReceiptRepairHistory(root);
   for (const resolution of [
     "generic",
@@ -357,7 +365,7 @@ async function testMissingReceiptRepair(
   assert.match(
     repaired.warnings.join("\n"),
     shared
-      ? /Replaced (missing|invalid) archived coverage receipt /
+      ? /Replaced (missing|invalid) (archived|saved) coverage receipt /
       : archived
         ? /Replaced missing archived coverage receipt /
         : /Replaced missing saved coverage receipt /,

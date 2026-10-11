@@ -608,17 +608,17 @@ async function preserveScanDraft(
       sources.unshift(progress);
     }
   }
-  const selectedReceiptRefs = new Set<string>();
-  const selectedSurfaceIds = new Set<string>();
+  const selectedReceiptsBySurface = new Map<string, Set<string>>();
   for (const selected of [result, ...sources]) {
     const rows = (selected.coverage.surfaces as JsonObject[]).filter(
-      (row) => typeof row.id === "string" && !selectedSurfaceIds.has(row.id),
+      (row) =>
+        typeof row.id === "string" && !selectedReceiptsBySurface.has(row.id),
     );
-    for (const row of rows) {
-      selectedSurfaceIds.add(row.id as string);
-      for (const ref of (row.receiptRefs as string[] | undefined) ?? [])
-        selectedReceiptRefs.add(ref);
-    }
+    for (const row of rows)
+      selectedReceiptsBySurface.set(
+        row.id as string,
+        new Set((row.receiptRefs as string[] | undefined) ?? []),
+      );
   }
   const currentCandidateIds = completedCandidateIds(result);
   const resolvedCandidateIds = completedCandidateIds(result, sources);
@@ -791,14 +791,15 @@ async function preserveScanDraft(
   // Archived attempts move their receipt files with them. Copy only evidence
   // still retained by this draft into its current, independently bound output.
   // Superseded surfaces must not reserve a discarded receipt's spelling.
-  const retainedReceiptRefs = new Set(
-    (result.coverage.surfaces as JsonObject[]).flatMap(
-      (row) => (row.receiptRefs as string[] | undefined) ?? [],
+  const retainedSelectedReceiptRefs = new Set(
+    (result.coverage.surfaces as JsonObject[]).flatMap((row) =>
+      ((row.receiptRefs as string[] | undefined) ?? []).filter((ref) =>
+        selectedReceiptsBySurface.get(row.id as string)?.has(ref),
+      ),
     ),
   );
   const receiptPaths = new Map<string, string>();
-  for (const ref of selectedReceiptRefs) {
-    if (!retainedReceiptRefs.has(ref)) continue;
+  for (const ref of retainedSelectedReceiptRefs) {
     const origin = archivedReceipts.get(ref);
     let components: string[];
     try {
@@ -827,7 +828,10 @@ async function preserveScanDraft(
         .join("/");
       const key = normalized.toLowerCase();
       const origin = archivedReceipts.get(ref);
-      if (!origin && selectedReceiptRefs.has(ref)) {
+      if (
+        !origin &&
+        selectedReceiptsBySurface.get(row.id as string)?.has(ref)
+      ) {
         if (!receiptPaths.has(key)) receiptPaths.set(key, normalized);
         continue;
       }

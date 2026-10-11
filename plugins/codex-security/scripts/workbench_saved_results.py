@@ -33,6 +33,7 @@ from finalize_scan_contract import (
     _recover_unsealed_findings,
     _remove_scan_local_file_if_exists,
     _require_portable_relative_path,
+    _require_str,
     _validate_completion_binding,
     _validate_resolved_deferred,
     _validate_schema_node,
@@ -803,6 +804,15 @@ def _generic_surface_updates(
                 continue
             latest_surface = max(retained, key=lambda match: source_order[match[0]])[1]
             retained_surfaces[key] = latest_surface
+            # Recovery repairs disposition and receipts before validating row
+            # metadata. A row discarded there cannot reserve a receipt spelling.
+            metadata = _project_worker_coverage_row(latest_surface, key[0], "surfaces")
+            metadata.update(disposition="needs_follow_up", receiptRefs=[])
+            try:
+                _require_str(metadata, "id", "coverage.surfaces")
+                _validate_schema_node(metadata, surface_schema, "coverage.surfaces")
+            except ContractError:
+                continue
             refs = latest_surface.get("receiptRefs", [])
             for ref in refs if isinstance(refs, list) else []:
                 if receipt_error(ref) is None:

@@ -875,3 +875,84 @@ def test_non_emitted_repair_cannot_reserve_another_surfaces_receipt(tmp_path, un
     }
     assert all("missing.md" in warning for warning in warnings)
     assert all(path.read_bytes() == content for path, content in originals.items())
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize(
+    "metadata", ["valid", "missing-label", "invalid-label", "disposition", "receipt", "empty-id"]
+)
+def test_only_recoverable_surface_metadata_reserves_receipt_spelling(tmp_path, reverse, metadata):
+    current_name, historical_name = (
+        ("review.md", "Review.md") if reverse else ("Review.md", "review.md")
+    )
+    selected = {
+        "id": "selected",
+        "label": "Current selected review",
+        "disposition": "no_issue_found",
+        "receiptRefs": [f"artifacts/{current_name}"],
+    }
+    if metadata == "empty-id":
+        selected["id"] = ""
+    elif metadata == "missing-label":
+        selected.pop("label")
+    elif metadata == "invalid-label":
+        selected["label"] = 7
+    elif metadata == "disposition":
+        selected["disposition"] = "unverified"
+    elif metadata == "receipt":
+        selected["receiptRefs"].append(7)
+    writer = {
+        "id": "writer",
+        "label": "Retained review",
+        "disposition": "no_issue_found",
+        "receiptRefs": ["artifacts/replacement.md"],
+    }
+    accepted = saved_draft("coverage-scan", complete=True, surfaces=[selected, writer])
+    source = worker(tmp_path, "first", accepted)
+    output = Path(source["artifact_dir"])
+    for name in [current_name, historical_name, "replacement.md"]:
+        (output / "artifacts" / name).write_text(f"Evidence from {name}.\n")
+    history = saved_draft(
+        "coverage-scan",
+        complete=True,
+        surfaces=[
+            {**writer, "receiptRefs": [f"artifacts/{historical_name}", "artifacts/missing.md"]}
+        ],
+    )
+    for modified, draft in [(100, history), (200, accepted)]:
+        checkpoint = write_checkpoint(output / "checkpoints", draft)
+        os.utime(checkpoint, ns=(modified, modified))
+    (output / "checkpoint-head.json").write_text(json.dumps({"checkpoint": checkpoint.name}))
+    os.utime(output / "checkpoint-head.json", ns=(250, 250))
+    os.utime(output / "result.json", ns=(300, 300))
+    originals = {p: p.read_bytes() for p in output.rglob("*") if p.is_file()}
+    warnings = []
+    documents = saved.merge_saved_results(
+        tmp_path,
+        "coverage-scan",
+        saved_binding("deep_repository", repository="synthetic"),
+        [source],
+        warnings,
+        stopped=True,
+        reason="Source review stopped.",
+        project_worker_coverage=True,
+    )
+    assert documents is not None
+    finalizer._recover_unsealed_coverage(
+        documents[2],
+        Path(saved.__file__).resolve().parent.parent / "schemas",
+        tmp_path,
+        warnings,
+        [],
+    )
+    rows = {row["id"]: row for row in documents[2]["surfaces"]}
+    prefix = output.relative_to(tmp_path).as_posix() + "/artifacts/"
+    expected = {prefix + "replacement.md"}
+    if metadata in {"missing-label", "invalid-label"}:
+        expected.add(prefix + historical_name)
+        assert "first/selected" not in rows
+        assert any("Skipped malformed coverage surface" in warning for warning in warnings)
+    else:
+        assert rows[f"first/{selected['id']}"]["receiptRefs"] == [prefix + current_name]
+    assert set(rows["first/writer"]["receiptRefs"]) == expected
+    assert all(path.read_bytes() == content for path, content in originals.items())
