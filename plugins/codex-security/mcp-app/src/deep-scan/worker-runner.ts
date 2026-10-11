@@ -132,6 +132,7 @@ export class DeepScanWorkerRunner {
         pluginRoot: this.options.pluginRoot,
         targetPath: run.targetPath,
         scope: run.scope,
+        includePaths: run.includePaths,
         userContext: run.userContext,
         workerLabel,
         subagents: run.config.subagents,

@@ -646,3 +646,102 @@ def test_superseded_surface_cannot_reserve_historical_receipt(tmp_path, projecte
     )
     assert not warnings
     assert all(path.read_bytes() == contents for path, contents in originals.items())
+
+
+@pytest.mark.parametrize("scenario", ["superseded-omitted", "unselected-metadata"])
+@pytest.mark.parametrize("missing", [False, True])
+def test_receipt_repair_preserves_selected_surface_metadata(tmp_path, scenario, missing):
+    source = worker(tmp_path, "first", saved_draft("coverage-scan", complete=True))
+    output = Path(source["artifact_dir"])
+    (output / "artifacts/accepted.md").write_text("Accepted completed review.\n")
+    (output / "artifacts/unselected.md").write_text("Unselected interrupted observation.\n")
+    surface = {
+        "id": "api",
+        "label": "Archived label",
+        "notes": "Archived notes",
+        "disposition": "no_issue_found",
+        "receiptRefs": ["artifacts/missing.md"],
+    }
+    if scenario == "superseded-omitted":
+        for modified, row in [
+            (100, surface),
+            (
+                200,
+                {
+                    **surface,
+                    "label": "Intermediate label",
+                    "receiptRefs": ["artifacts/accepted.md"],
+                },
+            ),
+        ]:
+            checkpoint = write_checkpoint(
+                output / "checkpoints", saved_draft("coverage-scan", surfaces=[row])
+            )
+            os.utime(checkpoint, ns=(modified, modified))
+        missing_path = output / "artifacts/missing.md"
+    else:
+        archive = output.parent / "attempts/attempt-01"
+        (archive / "artifacts").mkdir(parents=True)
+        (archive / "result.json").write_text(
+            json.dumps(saved_draft("coverage-scan", complete=True, surfaces=[surface]))
+        )
+        os.utime(archive / "result.json", ns=(100, 100))
+        missing_path = archive / "artifacts/missing.md"
+        accepted = saved_draft(
+            "coverage-scan",
+            complete=True,
+            surfaces=[
+                {
+                    **surface,
+                    "label": "Accepted label",
+                    "notes": "Accepted notes",
+                    "receiptRefs": ["artifacts/accepted.md"],
+                }
+            ],
+        )
+        checkpoint = write_checkpoint(output / "checkpoints", accepted)
+        os.utime(checkpoint, ns=(200, 200))
+        (output / "checkpoint-head.json").write_text(json.dumps({"checkpoint": checkpoint.name}))
+        os.utime(output / "checkpoint-head.json", ns=(250, 250))
+        (output / "result.json").write_text(json.dumps(accepted))
+        pending = saved_draft(
+            "coverage-scan",
+            surfaces=[
+                {
+                    **surface,
+                    "label": "Unselected label",
+                    "notes": "Unselected notes",
+                    "receiptRefs": ["artifacts/unselected.md"],
+                }
+            ],
+        )
+        checkpoint = write_checkpoint(output / "checkpoints", pending)
+        os.utime(checkpoint, ns=(400, 400))
+        source["attempt"] = 2
+    os.utime(output / "result.json", ns=(300, 300))
+    if not missing:
+        missing_path.write_text("Existing historical receipt.\n")
+    originals = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    documents = saved.merge_saved_results(
+        tmp_path,
+        "coverage-scan",
+        saved_binding("deep_repository", repository="synthetic"),
+        [source],
+        [],
+        stopped=True,
+        reason="Source review stopped.",
+        project_worker_coverage=True,
+    )
+    assert documents is not None
+    surfaces = documents[2]["surfaces"]
+    if scenario == "superseded-omitted":
+        assert surfaces == []
+    else:
+        assert len(surfaces) == 1
+        assert surfaces[0]["label"] == "Accepted label"
+        assert surfaces[0]["notes"] == "Accepted notes"
+        assert (
+            output.relative_to(tmp_path).as_posix() + "/artifacts/accepted.md"
+            in surfaces[0]["receiptRefs"]
+        )
+    assert all(path.read_bytes() == contents for path, contents in originals.items())

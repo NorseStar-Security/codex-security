@@ -43,7 +43,9 @@ try {
   await testLegacyDeferredPublication(root);
   await testMissingReceiptRepair(root);
   for (const reverse of [false, true])
-    await testMissingReceiptRepair(root, true, reverse);
+    await testMissingReceiptRepair(root, { shared: true, reverse });
+  for (const complete of [false, true])
+    await testMissingReceiptRepair(root, { archived: false, complete });
   await testSharedMissingReceiptRepairHistory(root);
   for (const resolution of [
     "generic",
@@ -194,8 +196,17 @@ async function testLegacyDeferredPublication(root: string) {
 
 async function testMissingReceiptRepair(
   root: string,
-  shared = false,
-  reverse = false,
+  {
+    shared = false,
+    reverse = false,
+    archived = true,
+    complete = true,
+  }: {
+    shared?: boolean;
+    reverse?: boolean;
+    archived?: boolean;
+    complete?: boolean;
+  } = {},
 ) {
   const missing = shared ? "artifacts/review.md" : "artifacts/missing.md";
   const existing = shared ? "artifacts/Review.md" : "artifacts/existing.md";
@@ -220,6 +231,7 @@ async function testMissingReceiptRepair(
   ];
   if (reverse) surfaces.reverse();
   const result = draft([], {
+    complete,
     coverage: {
       completeness: "partial",
       explicitExclusions: [],
@@ -239,7 +251,7 @@ async function testMissingReceiptRepair(
     },
   });
   const worker = await createWorker(
-    path.join(root, `repair-${shared}-${reverse}`),
+    path.join(root, `repair-${shared}-${reverse}-${archived}-${complete}`),
     "first",
     result,
   );
@@ -266,12 +278,21 @@ async function testMissingReceiptRepair(
   await recordCodexSecurityWorkerScanDraft(context, result);
   await assert.rejects(
     validateDiscoveryArtifacts(worker.artifacts, worker.resultPath, scanId),
-    /coverage receipt.*unavailable/,
+    complete ? /coverage receipt.*unavailable/ : /only a checkpoint/,
   );
-  const archived = path.join(path.dirname(output), "attempts/attempt-01");
-  await mkdir(path.dirname(archived));
-  await rename(output, archived);
-  await mkdir(path.join(output, "artifacts"), { recursive: true });
+  const archive = path.join(path.dirname(output), "attempts/attempt-01");
+  await mkdir(path.dirname(archive));
+  const history = archived ? archive : output;
+  if (archived) {
+    await rename(output, archive);
+    await mkdir(path.join(output, "artifacts"), { recursive: true });
+  }
+  const checkpoints = await readdir(path.join(history, "checkpoints"));
+  const checkpointBytes = await Promise.all(
+    checkpoints.map((name) =>
+      readFile(path.join(history, "checkpoints", name), "utf8"),
+    ),
+  );
   const replacementDraft = draft(
     shared
       ? [
@@ -301,28 +322,45 @@ async function testMissingReceiptRepair(
       },
     },
   );
-  await assert.rejects(
-    recordCodexSecurityWorkerScanDraft(context, replacementDraft),
-    /replacement coverage receipt.*unavailable/,
-  );
+  if (archived)
+    await assert.rejects(
+      recordCodexSecurityWorkerScanDraft(context, replacementDraft),
+      /replacement coverage receipt.*unavailable/,
+    );
   await writeFile(
     path.join(output, "artifacts/replacement.md"),
     "Corrected review evidence.\n",
   );
+  if (!archived && !complete) {
+    await recordCodexSecurityWorkerScanDraft(
+      context,
+      draft([], {
+        complete: false,
+        coverage: {
+          ...result.coverage,
+          surfaces: [
+            { ...surfaces[0], receiptRefs: ["artifacts/replacement.md"] },
+          ],
+        },
+      }),
+    );
+  }
   const repaired = await recordCodexSecurityWorkerScanDraft(
     context,
     replacementDraft,
-  );
-  assert.match(
-    repaired.warnings.join("\n"),
-    shared
-      ? /Replaced (missing|invalid) archived coverage receipt /
-      : /Replaced missing archived coverage receipt /,
   );
   const accepted = await validateDiscoveryArtifacts(
     worker.artifacts,
     worker.resultPath,
     scanId,
+  );
+  assert.match(
+    repaired.warnings.join("\n"),
+    shared
+      ? /Replaced (missing|invalid) archived coverage receipt /
+      : archived
+        ? /Replaced missing archived coverage receipt /
+        : /Replaced missing saved coverage receipt /,
   );
   assert.deepEqual(accepted.coverage.deferred, []);
   assert.equal(accepted.findings.length, shared ? 1 : 0);
@@ -337,14 +375,22 @@ async function testMissingReceiptRepair(
     new Set(["Original valid evidence.\n", "Corrected review evidence.\n"]),
   );
   assert.equal(
-    await readFile(path.join(archived, existing), "utf8"),
+    await readFile(path.join(history, existing), "utf8"),
     "Original valid evidence.\n",
+  );
+  assert.deepEqual(
+    await Promise.all(
+      checkpoints.map((name) =>
+        readFile(path.join(history, "checkpoints", name), "utf8"),
+      ),
+    ),
+    checkpointBytes,
   );
   // The saved closeout remains valid when later writes omit unchanged work.
   for (const complete of [false, true]) {
     await recordCodexSecurityWorkerScanDraft(context, draft([], { complete }));
   }
-  await rename(output, path.join(path.dirname(archived), "attempt-02"));
+  await rename(output, path.join(path.dirname(archive), "attempt-02"));
   await mkdir(output);
   await recordCodexSecurityWorkerScanDraft(
     context,

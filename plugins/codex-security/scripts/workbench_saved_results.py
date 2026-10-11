@@ -793,14 +793,16 @@ def _generic_surface_updates(
     updates: list[tuple[str | None, dict[str, Any]]] = []
     # Current selections across all surfaces take precedence over historical refs.
     receipt_paths: dict[str, str] = {}
+    retained_surfaces: dict[tuple[str | None, str], dict[str, Any]] = {}
     if receipt_root is not None:
-        for (owner, _), matches in saved_surfaces.items():
+        for key, matches in saved_surfaces.items():
             retained = [
-                match for match in matches if surface_is_retained(match[0], owner, match[1])
+                match for match in matches if surface_is_retained(match[0], key[0], match[1])
             ]
             if not retained:
                 continue
             latest_surface = max(retained, key=lambda match: source_order[match[0]])[1]
+            retained_surfaces[key] = latest_surface
             refs = latest_surface.get("receiptRefs", [])
             for ref in refs if isinstance(refs, list) else []:
                 if receipt_error(ref) is None:
@@ -884,8 +886,14 @@ def _generic_surface_updates(
             # An accepted checkpoint can update a saved surface by ID without
             # optional surfaceIds links on its generic task.
             latest_surface = max(matches, key=lambda match: source_order[match[0]])[1]
-            update = copy.deepcopy(latest_surface)
-            refs = update.setdefault("receiptRefs", [])
+            target = retained_surfaces.get((owner, identity)) if repair_only else latest_surface
+            if target is None:
+                continue
+            update = copy.deepcopy(target)
+            # Historical evidence can repair a retained row without promoting
+            # an unselected observation's label, notes, or other metadata.
+            refs = copy.deepcopy(latest_surface.get("receiptRefs", []))
+            update["receiptRefs"] = refs
             replaced_receipt = False
             if isinstance(refs, list):
                 repaired = (
@@ -2546,6 +2554,7 @@ def preserve_scan_results_locked(
         completion_binding=binding,
         completion_warnings=warnings,
         draft_documents=documents,
+        finding_scope=db.requested_scan_paths(scan) if scan["mode"] == "deep" else None,
     )
     snapshots = _snapshot_published_outputs(scan_dir)
     try:
