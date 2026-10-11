@@ -25,7 +25,6 @@ from workbench_test_support import (
     saved_draft,
     scan_command,
     start_delivered_scan,
-    worker_coverage_id,
     write_checkpoint,
     write_completed_contract,
 )
@@ -79,7 +78,7 @@ def test_late_head_changes_require_explicit_recovery(
     assert any("/checkpoint-heads/" in path for path in frozen)
     assert not any(path.endswith("checkpoint-head.json") for path in frozen)
     assert not any(
-        row["id"] in {"review", worker_coverage_id(worker_id, "review")}
+        row["id"] in {"review", f"{worker_id}/review"}
         for row in json.loads((scan_dir / "coverage.json").read_text())["deferred"]
     )
     assert get_scan(state, scan_id)["scan"]["resultsRecoveryNeeded"] is False
@@ -99,9 +98,9 @@ def test_late_head_changes_require_explicit_recovery(
         for row in coverage["deferred"]
         if row["id"] != "scan-stopped"
     )
-    assert any(
-        row["id"] == worker_coverage_id(worker_id, "review") for row in coverage["deferred"]
-    ) is (selection == "reopened")
+    assert any(row["id"] == f"{worker_id}/review" for row in coverage["deferred"]) is (
+        selection == "reopened"
+    )
     published = manifest_path.read_bytes()
     scan_command(state, "recover-scan-results", scan_id, environment=environment)
     assert manifest_path.read_bytes() == published
@@ -940,7 +939,7 @@ def test_parent_head_selection_matches_frozen_publication_retry(
         assert not any(row["id"] == child_work["id"] for row in coverage["deferred"])
         assert {
             **child_work,
-            "id": worker_coverage_id(worker_id, child_work["id"]),
+            "id": f"{worker_id}/{child_work['id']}",
             "workerId": worker_id,
         } in coverage["deferred"]
         if evidence == "deferred":

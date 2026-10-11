@@ -16,7 +16,6 @@ from workbench_test_support import (
     preserve_scan_results,
     saved_discovery_worker,
     saved_draft,
-    worker_coverage_id,
     write_checkpoint,
 )
 
@@ -416,9 +415,7 @@ def test_generic_surface_recovery_uses_resolved_candidate_identity(
         monkeypatch, saved_results, state, codex_home, scan_dir, scan_id
     )
     for coverage in (first_coverage, recovered):
-        api_surfaces = [
-            row for row in coverage["surfaces"] if row["id"] == worker_coverage_id(worker_id, "api")
-        ]
+        api_surfaces = [row for row in coverage["surfaces"] if row["id"] == f"{worker_id}/api"]
         assert len(api_surfaces) == 1
         expected_disposition = "no_issue_found" if rejected_here else "needs_follow_up"
         assert api_surfaces[0]["disposition"] == expected_disposition
@@ -426,19 +423,16 @@ def test_generic_surface_recovery_uses_resolved_candidate_identity(
         assert not any(row["id"] == candidate["id"] for row in coverage["deferred"])
         assert not any(row["id"] in {"api", rejection["id"]} for row in coverage["surfaces"])
         assert not any(
-            row["id"] in {generic["id"], worker_coverage_id(worker_id, generic["id"])}
+            row["id"] in {generic["id"], f"{worker_id}/{generic['id']}"}
             for row in coverage["deferred"]
         )
         assert (
-            any(
-                row["id"] == worker_coverage_id(worker_id, candidate["id"])
-                for row in coverage["deferred"]
-            )
+            any(row["id"] == f"{worker_id}/{candidate['id']}" for row in coverage["deferred"])
         ) is not rejected_here
         if outcome != "unresolved":
             assert {
                 **rejection,
-                "id": worker_coverage_id(rejection_worker_id, rejection["id"]),
+                "id": f"{rejection_worker_id}/{rejection['id']}",
                 "workerId": rejection_worker_id,
             } in coverage["surfaces"]
         for row in coverage["deferred"]:
@@ -512,11 +506,10 @@ def test_split_deferred_rows_keep_distinct_ids_in_frozen_recovery(
         assert len({row["id"] for row in retained}) == len(retained)
         if explicit_ids:
             assert {row["id"] for row in retained} == {
-                worker_coverage_id(worker_id, identity) for identity in expected_ids
+                f"{worker_id}/{identity}" for identity in expected_ids
             }
         assert all(
-            row["id"] not in {combined["id"], worker_coverage_id(worker_id, combined["id"])}
-            for row in retained
+            row["id"] not in {combined["id"], f"{worker_id}/{combined['id']}"} for row in retained
         )
         assert all(row["workerId"] == worker_id for row in retained)
         if payload_field:
@@ -575,7 +568,7 @@ def test_unnamed_observation_does_not_replace_saved_context(
         monkeypatch, saved_results, state, codex_home, scan_dir, scan_id
     )
     expected_output = (
-        {**expected, "id": worker_coverage_id(worker_id, expected["id"]), "workerId": worker_id}
+        {**expected, "id": f"{worker_id}/{expected['id']}", "workerId": worker_id}
         if layout == "worker"
         else expected
     )
