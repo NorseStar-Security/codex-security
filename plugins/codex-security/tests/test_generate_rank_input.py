@@ -880,3 +880,62 @@ def test_revision_preview_uses_the_same_read_window_as_local_files(tmp_path: Pat
     rows = read_jsonl(output)
     assert "first" in rows[0]["preview"]
     assert "outside_window" not in rows[0]["preview"]
+
+
+@pytest.mark.parametrize("mode", ["staged", "unstaged", "untracked", "deleted", "revisions"])
+@pytest.mark.parametrize("command", ["make-diff-rank-input", "generate-in-scope-files"])
+def test_local_diff_inventory_excludes_svn_but_revision_diff_retains_it(
+    tmp_path: Path, mode: str, command: str
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    initialize_repo(repo)
+    names = [".svn/wc.db", "vendor/.svn/entries", "source.py", "vendor/.svn-source.py"]
+    (repo / "base.py").write_text("base\n", encoding="utf-8")
+    if mode != "untracked":
+        for name in names:
+            source = repo / name
+            source.parent.mkdir(parents=True, exist_ok=True)
+            source.write_text("before\n", encoding="utf-8")
+    git(repo, "add", ".")
+    git(repo, "commit", "-qm", "base")
+    base = git(repo, "rev-parse", "HEAD")
+    for name in names:
+        source = repo / name
+        source.parent.mkdir(parents=True, exist_ok=True)
+        if mode == "deleted":
+            source.unlink()
+        else:
+            source.write_text("after\n", encoding="utf-8")
+    if mode in {"staged", "revisions"}:
+        git(repo, "add", ".")
+    if mode == "revisions":
+        git(repo, "commit", "-qm", "changed")
+    diff_mode = "revisions" if mode == "revisions" else "local-patch"
+    output = tmp_path / "inventory"
+    if command == "make-diff-rank-input":
+        run_repo_cli(command, repo, output, "--base", base, "--mode", diff_mode)
+        paths = [row["path"] for row in read_jsonl(output)]
+    else:
+        subprocess.run(
+            [
+                sys.executable,
+                str(PLUGIN_ROOT / "scripts" / "generate_in_scope_files.py"),
+                "--repo",
+                str(repo),
+                "--scope",
+                ".",
+                "--out",
+                str(output),
+                "--diff-base",
+                base,
+                "--diff-mode",
+                diff_mode,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        paths = output.read_text(encoding="utf-8").splitlines()
+    expected = names if mode == "revisions" else names[2:]
+    assert sorted(paths) == sorted(expected)

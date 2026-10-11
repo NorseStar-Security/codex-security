@@ -359,7 +359,8 @@ def git_changed_paths(repo: Path, base: str, head: str, mode: str) -> list[tuple
         return sorted(
             (path, status)
             for path, status in combined.items()
-            if status == "D" or (not path.is_symlink() and path.is_file())
+            if SOURCE_METADATA_DIRECTORIES.isdisjoint(path.relative_to(repo).parts)
+            and (status == "D" or (not path.is_symlink() and path.is_file()))
         )
     raise SystemExit(f"Unknown diff mode: {mode}")
 
