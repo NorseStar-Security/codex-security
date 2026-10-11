@@ -1,3 +1,6 @@
+import type { z } from "zod";
+import type { candidateSchemaV1 } from "../deep-scan/artifact-contracts.js";
+import discoverySchema from "../../../schemas/definitions/discovery-candidate.schema.json" with { type: "json" };
 import { isRecord as object } from "../record.js";
 import { decodeUtf8 } from "./utf8";
 import { createHash, randomBytes } from "node:crypto";
@@ -31,32 +34,13 @@ const roles = [
   "concrete_implementation",
   "evidence",
 ];
-const fields = new Set([
-  "candidate_id",
-  "cwe_ids",
-  "locations",
-  "summary",
-  "evidence",
-  "context",
-  "instance",
-]);
-const locationFields = new Set(["path", "start_line", "end_line", "role"]);
+const { discoveryCandidate, rawDiscoveryLocation } = discoverySchema.$defs;
+const fields = new Set(Object.keys(discoveryCandidate.properties));
+const locationFields = new Set(Object.keys(rawDiscoveryLocation.properties));
 const jsonFields = [...fields, ...locationFields].sort();
 type Row = Record<string, unknown>;
-interface Location {
-  path: string;
-  start_line: number;
-  end_line: number;
-  role: string;
-}
-interface Candidate {
-  cwe_ids: string[];
-  locations: Location[];
-  summary: string;
-  evidence: string;
-  context?: string;
-  instance?: string;
-}
+type Candidate = Omit<z.infer<typeof candidateSchemaV1>, "candidate_id">;
+type Location = Candidate["locations"][number];
 
 function compare(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
@@ -259,7 +243,7 @@ function normalizeLocations(
       path: name,
       start_line: start,
       end_line: end,
-      role: item.role,
+      role: item.role as Location["role"],
     };
     normalized.set(stableJson(location), location);
   }
