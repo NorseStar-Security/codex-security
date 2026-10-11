@@ -41,6 +41,8 @@ try {
   await testCoveragePublicationParity(root);
   await testLegacyDeferredPublication(root);
   await testMissingReceiptRepair(root);
+  for (const reverse of [false, true])
+    await testMissingReceiptRepair(root, true, reverse);
   await testSharedMissingReceiptRepairHistory(root);
   await testCurrentReceiptSelectionBeforeArchivedHistory(root);
   await testCurrentReceiptSelectionBeforeArchivedHistory(root, true);
@@ -185,25 +187,57 @@ async function testLegacyDeferredPublication(root: string) {
   );
 }
 
-async function testMissingReceiptRepair(root: string) {
+async function testMissingReceiptRepair(
+  root: string,
+  shared = false,
+  reverse = false,
+) {
+  const missing = shared ? "artifacts/review.md" : "artifacts/missing.md";
+  const existing = shared ? "artifacts/Review.md" : "artifacts/existing.md";
+  const surfaces: JsonObject[] = [
+    {
+      id: "api",
+      label: "API",
+      disposition: "needs_follow_up",
+      receiptRefs: reverse ? [existing, missing] : [missing, existing],
+    },
+    ...(shared
+      ? [
+          {
+            id: "candidate",
+            candidateId: "candidate",
+            label: "Candidate",
+            disposition: "needs_follow_up",
+            receiptRefs: [missing],
+          },
+        ]
+      : []),
+  ];
+  if (reverse) surfaces.reverse();
   const result = draft([], {
     coverage: {
       completeness: "partial",
       explicitExclusions: [],
-      surfaces: [
-        {
-          id: "api",
-          label: "API",
-          disposition: "needs_follow_up",
-          receiptRefs: ["artifacts/missing.md", "artifacts/existing.md"],
-        },
-      ],
+      surfaces,
       deferred: [
         { id: "review", reason: "Review pending.", surfaceIds: ["api"] },
+        ...(shared
+          ? [
+              {
+                id: "candidate",
+                candidateId: "candidate",
+                reason: "Validate candidate.",
+              },
+            ]
+          : []),
       ],
     },
   });
-  const worker = await createWorker(path.join(root, "repair"), "first", result);
+  const worker = await createWorker(
+    path.join(root, `repair-${shared}-${reverse}`),
+    "first",
+    result,
+  );
   const output = path.dirname(worker.resultPath);
   const context = {
     root: output,
@@ -212,10 +246,18 @@ async function testMissingReceiptRepair(root: string) {
     scanId,
   };
   await mkdir(path.join(output, "artifacts"));
-  await writeFile(
-    path.join(output, "artifacts/existing.md"),
-    "Original valid evidence.\n",
-  );
+  await writeFile(path.join(output, existing), "Original valid evidence.\n");
+  if (
+    shared &&
+    (await readFile(path.join(output, missing)).then(
+      () => true,
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return false;
+        throw error;
+      },
+    ))
+  )
+    return; // A missing case variant requires a case-sensitive filesystem.
   await recordCodexSecurityWorkerScanDraft(context, result);
   await assert.rejects(
     validateDiscoveryArtifacts(worker.artifacts, worker.resultPath, scanId),
@@ -225,23 +267,35 @@ async function testMissingReceiptRepair(root: string) {
   await mkdir(path.dirname(archived));
   await rename(output, archived);
   await mkdir(path.join(output, "artifacts"), { recursive: true });
-  const replacementDraft = draft([], {
-    complete: true,
-    coverage: {
-      completeness: "complete",
-      explicitExclusions: [],
-      deferred: [],
-      surfaces: [
-        {
-          id: "api",
-          label: "API",
-          disposition: "no_issue_found",
-          receiptRefs: ["artifacts/replacement.md"],
-        },
-      ],
-      resolvedDeferred: [{ id: "review", reason: "Source review completed." }],
+  const replacementDraft = draft(
+    shared
+      ? [
+          {
+            ...finding("candidate", "src/fixture.py"),
+            provenance: { source: "local_plugin", candidateId: "candidate" },
+          },
+        ]
+      : [],
+    {
+      complete: true,
+      coverage: {
+        completeness: "complete",
+        explicitExclusions: [],
+        deferred: [],
+        surfaces: [
+          {
+            id: "api",
+            label: "API",
+            disposition: "no_issue_found",
+            receiptRefs: ["artifacts/replacement.md"],
+          },
+        ],
+        resolvedDeferred: [
+          { id: "review", reason: "Source review completed." },
+        ],
+      },
     },
-  });
+  );
   await assert.rejects(
     recordCodexSecurityWorkerScanDraft(context, replacementDraft),
     /replacement coverage receipt.*unavailable/,
@@ -256,7 +310,9 @@ async function testMissingReceiptRepair(root: string) {
   );
   assert.match(
     repaired.warnings.join("\n"),
-    /Replaced missing archived coverage receipt .*missing.md/,
+    shared
+      ? /Replaced (missing|invalid) archived coverage receipt /
+      : /Replaced missing archived coverage receipt /,
   );
   const accepted = await validateDiscoveryArtifacts(
     worker.artifacts,
@@ -264,6 +320,7 @@ async function testMissingReceiptRepair(root: string) {
     scanId,
   );
   assert.deepEqual(accepted.coverage.deferred, []);
+  assert.equal(accepted.findings.length, shared ? 1 : 0);
   const receipts = accepted.coverage.surfaces[0].receiptRefs;
   assert.equal(receipts.length, 2);
   assert.deepEqual(
@@ -275,7 +332,7 @@ async function testMissingReceiptRepair(root: string) {
     new Set(["Original valid evidence.\n", "Corrected review evidence.\n"]),
   );
   assert.equal(
-    await readFile(path.join(archived, "artifacts/existing.md"), "utf8"),
+    await readFile(path.join(archived, existing), "utf8"),
     "Original valid evidence.\n",
   );
   // The saved closeout remains valid when later writes omit unchanged work.

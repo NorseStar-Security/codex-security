@@ -710,10 +710,23 @@ async function preserveScanDraft(
   const receiptPaths = new Map<string, string>();
   for (const ref of selectedReceiptRefs) {
     if (!retainedReceiptRefs.has(ref)) continue;
-    const normalized = ref
-      .split("/")
-      .filter((part) => part !== "" && part !== ".")
-      .join("/");
+    const origin = archivedReceipts.get(ref);
+    let components: string[];
+    try {
+      components = coverageReceiptComponents(ref);
+      await artifactSourcePath(
+        origin?.context ?? context,
+        origin
+          ? coverageReceiptComponents(origin.components.join("/"))
+          : components,
+        "selected coverage receipt",
+      );
+    } catch {
+      // Unavailable evidence cannot win a spelling preference. The normal
+      // copy/repair and discovery validation paths still report its error.
+      continue;
+    }
+    const normalized = components.join("/");
     if (!receiptPaths.has(normalized.toLowerCase()))
       receiptPaths.set(normalized.toLowerCase(), normalized);
   }
