@@ -1,32 +1,29 @@
-import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
 import { describe, expect, test } from "bun:test";
-import { main, runCodexSkillCommand } from "../src/cli.js";
+import {
+  main,
+  runCodexSkillCommand,
+  runRepositoryCommand,
+} from "../src/cli.js";
 import { dependencies } from "./cli-fixtures.js";
 import { createCliTest } from "./support/cli-run.js";
 
 type FixtureOptions = NonNullable<Parameters<typeof dependencies>[0]>;
-const execFileAsync = promisify(execFile);
 
 async function repositoryFixture({
   initializeGit = true,
   initialCommit = true,
 } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "patch-results-"));
-  const runRepositoryCommand: NonNullable<
-    FixtureOptions["onRepositoryCommand"]
-  > = async (command, args, cwd, options) => {
-    const { stdout } = await execFileAsync(command, [...args], {
-      cwd,
-      encoding: "utf8",
-      env: { ...process.env, ...options?.environment },
-      windowsHide: true,
-    });
-    return options?.trim === false ? stdout : stdout.trim();
-  };
   const git = (...args: string[]) =>
     runRepositoryCommand("git", args, directory);
   try {
@@ -229,18 +226,102 @@ lines.on("line", (line) => {
     },
   );
 
-  test("tracks force-staged ignored files in unborn Git without changing the index", async () => {
+  test.each([
+    [false, undefined],
+    [true, undefined],
+    [true, "assume-unchanged"],
+    [true, "skip-worktree"],
+  ] as const)(
+    "tracks force-staged ignored files in unborn Git with intent-to-add: %j and flag: %s",
+    async (intentToAdd, flag) => {
+      await using fixture = await repositoryFixture({ initialCommit: false });
+      await writeFile(
+        join(fixture.directory, ".gitignore"),
+        "ignored file.ts\n",
+      );
+      const source = join(fixture.directory, "ignored file.ts");
+      await writeFile(source, "original\n");
+      await fixture.git(
+        "add",
+        "--force",
+        ...(intentToAdd ? ["--intent-to-add"] : []),
+        "ignored file.ts",
+      );
+      if (flag)
+        await fixture.git("update-index", `--${flag}`, "ignored file.ts");
+      const indexPath = join(fixture.directory, ".git", "index");
+      const index = await readFile(indexPath);
+
+      const outcome = await fixture.patch(["Synthetic issue"], {
+        onCodex: async () => {
+          await writeFile(source, "fixed\n");
+          return 0;
+        },
+      });
+
+      expect(outcome.status, outcome.stderr).toBe(0);
+      expect(outcome.result).toMatchObject({
+        applied: true,
+        filesChanged: 1,
+        files: ["ignored file.ts"],
+      });
+      expect(await readFile(indexPath)).toEqual(index);
+    },
+  );
+
+  test.each([
+    ["assume-unchanged", "edit"],
+    ["assume-unchanged", "delete"],
+    ["assume-unchanged", "none"],
+    ["skip-worktree", "edit"],
+    ["skip-worktree", "delete"],
+    ["skip-worktree", "none"],
+  ] as const)(
+    "checks unborn Git patches despite %s with change: %s",
+    async (flag, change) => {
+      await using fixture = await repositoryFixture({ initialCommit: false });
+      await fixture.git("update-index", `--${flag}`, "app.ts");
+      const indexPath = join(fixture.directory, ".git", "index");
+      const index = await readFile(indexPath);
+
+      const outcome = await fixture.patch(["Synthetic issue"], {
+        onCodex: async () => {
+          const source = join(fixture.directory, "app.ts");
+          if (change === "delete") await rm(source);
+          if (change === "edit") await writeFile(source, "fixed\n");
+          return 0;
+        },
+      });
+
+      const applied = change !== "none";
+      expect(outcome.status, outcome.stderr).toBe(applied ? 0 : 2);
+      expect(outcome.result).toMatchObject({
+        applied,
+        filesChanged: applied ? 1 : 0,
+        files: applied ? ["app.ts"] : [],
+      });
+      expect(await readFile(indexPath)).toEqual(index);
+    },
+  );
+
+  test("detects same-size changes with racy unborn Git index timestamps", async () => {
     await using fixture = await repositoryFixture({ initialCommit: false });
-    await writeFile(join(fixture.directory, ".gitignore"), "ignored.ts\n");
-    const source = join(fixture.directory, "ignored.ts");
-    await writeFile(source, "original\n");
-    await fixture.git("add", "--force", "ignored.ts");
+    await fixture.git("config", "core.checkStat", "minimal");
+    await fixture.git("config", "core.trustctime", "false");
+    const source = join(fixture.directory, "app.ts");
     const indexPath = join(fixture.directory, ".git", "index");
+    const timestamp = new Date("2000-01-01T00:00:00Z");
+    await utimes(source, timestamp, timestamp);
+    await fixture.git("add", "app.ts");
+    await utimes(indexPath, timestamp, timestamp);
+    await writeFile(source, "unsafe!!\n");
+    await utimes(source, timestamp, timestamp);
     const index = await readFile(indexPath);
 
     const outcome = await fixture.patch(["Synthetic issue"], {
       onCodex: async () => {
-        await writeFile(source, "fixed\n");
+        await writeFile(source, "original\n");
+        await utimes(source, timestamp, timestamp);
         return 0;
       },
     });
@@ -249,7 +330,7 @@ lines.on("line", (line) => {
     expect(outcome.result).toMatchObject({
       applied: true,
       filesChanged: 1,
-      files: ["ignored.ts"],
+      files: ["app.ts"],
     });
     expect(await readFile(indexPath)).toEqual(index);
   });

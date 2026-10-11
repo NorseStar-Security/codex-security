@@ -19,7 +19,6 @@ import {
 } from "node:fs";
 import {
   chmod,
-  copyFile,
   lstat,
   mkdir,
   mkdtemp,
@@ -1167,7 +1166,11 @@ interface CliDependencies {
     command: "git" | "gh" | "glab",
     args: readonly string[],
     repository: string,
-    options?: { trim?: boolean; environment?: NodeJS.ProcessEnv },
+    options?: {
+      trim?: boolean;
+      environment?: NodeJS.ProcessEnv;
+      input?: string;
+    },
   ): Promise<string>;
   assessPatchRisk?: (request: PatchRiskRequest) => Promise<PatchRiskReport>;
   bulkScan?: BulkScanDiscoveryDependencies;
@@ -1184,6 +1187,32 @@ interface CliDependencies {
   matchFindings: typeof matchScanFindings;
   checkForUpdate(signal: AbortSignal): Promise<UpdateNotice | undefined>;
 }
+
+export const runRepositoryCommand: CliDependencies["runRepositoryCommand"] =
+  async (command, args, repository, options) => {
+    const executable = await resolveTrustedExecutable(
+      command,
+      process.env,
+      repository,
+    );
+    if (executable === null) {
+      throw new CodexSecurityError(
+        `${command} is not available on a trusted PATH.`,
+      );
+    }
+    const result = execFile(executable.executable, [...args], {
+      cwd: repository,
+      env: { ...executable.environment, ...options?.environment },
+      windowsHide: true,
+      maxBuffer: Infinity,
+    });
+    if (options?.input !== undefined) {
+      result.child.stdin?.on("error", () => {});
+      result.child.stdin?.end(options.input);
+    }
+    const { stdout } = await result;
+    return options?.trim === false ? stdout : stdout.trim();
+  };
 
 const DEFAULT_DEPENDENCIES: CliDependencies = {
   createSecurity: (config) =>
@@ -1245,24 +1274,7 @@ const DEFAULT_DEPENDENCIES: CliDependencies = {
       environment,
       input,
     ),
-  runRepositoryCommand: async (command, args, repository, options) => {
-    const executable = await resolveTrustedExecutable(
-      command,
-      process.env,
-      repository,
-    );
-    if (executable === null) {
-      throw new CodexSecurityError(
-        `${command} is not available on a trusted PATH.`,
-      );
-    }
-    const { stdout } = await execFile(executable.executable, [...args], {
-      cwd: repository,
-      env: { ...executable.environment, ...options?.environment },
-      windowsHide: true,
-    });
-    return options?.trim === false ? stdout : stdout.trim();
-  },
+  runRepositoryCommand,
   exportFindings: runArtifactExport,
   runWorkbench: async (args, input, signal, pythonPath) => {
     const environment = {
@@ -7225,18 +7237,21 @@ async function snapshotPatchTree(
     if (hasHead) {
       await run(["read-tree", "HEAD"]);
     } else {
-      const index = await dependencies.runRepositoryCommand(
+      // Preserve tracked paths, including ignored and intent-to-add files, without
+      // copying cached stat data or flags that can hide working-tree changes.
+      const entries = await dependencies.runRepositoryCommand(
         "git",
-        ["rev-parse", "--git-path", "index"],
+        ["ls-files", "--stage", "--full-name", "-z", "--", ":/"],
         repository,
+        { trim: false },
       );
-      try {
-        // Preserve staged ignored files without updating the user's index.
-        await copyFile(resolve(repository, index), environment.GIT_INDEX_FILE);
-      } catch (error) {
-        if (!isJsonObject(error) || error["code"] !== "ENOENT") throw error;
-        await run(["read-tree", "--empty"]);
-      }
+      await run(["read-tree", "--empty"]);
+      await dependencies.runRepositoryCommand(
+        "git",
+        ["update-index", "-z", "--index-info"],
+        repository,
+        { environment, input: entries },
+      );
     }
     await run(["--literal-pathspecs", "add", "--all"]);
     return await run(["write-tree"]);
