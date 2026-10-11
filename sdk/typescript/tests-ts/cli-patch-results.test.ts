@@ -269,6 +269,66 @@ lines.on("line", (line) => {
     },
   );
 
+  test("tracks ignored files with an inherited literal-pathspec environment", async () => {
+    await using fixture = await repositoryFixture({ initialCommit: false });
+    await writeFile(join(fixture.directory, ".gitignore"), "app.ts\n");
+    const indexPath = join(fixture.directory, ".git", "index");
+    const index = await readFile(indexPath);
+
+    const outcome = await fixture.patch(["Synthetic issue"], {
+      onRepositoryCommand: (command, args, repository, options) =>
+        runRepositoryCommand(command, args, repository, {
+          ...options,
+          environment: {
+            GIT_LITERAL_PATHSPECS: "1",
+            ...options?.environment,
+          },
+        }),
+      onCodex: async () => {
+        await writeFile(join(fixture.directory, "app.ts"), "fixed\n");
+        return 0;
+      },
+    });
+
+    expect(outcome.status, outcome.stderr).toBe(0);
+    expect(outcome.result).toMatchObject({
+      applied: true,
+      filesChanged: 1,
+      files: ["app.ts"],
+    });
+    expect(await readFile(indexPath)).toEqual(index);
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "tracks ignored filenames with raw bytes and Git quoting characters",
+    async () => {
+      await using fixture = await repositoryFixture({ initialCommit: false });
+      await fixture.git("config", "core.quotePath", "false");
+      await writeFile(join(fixture.directory, ".gitignore"), "ignored*\n");
+      const source = Buffer.concat([
+        Buffer.from(join(fixture.directory, "ignored-")),
+        process.platform === "darwin" ? Buffer.from("é") : Buffer.from([0xff]),
+        Buffer.from('\n"\\\t\r.ts'),
+      ]);
+      await writeFile(source, "original\n");
+      await fixture.git("add", "--force", ".");
+      const indexPath = join(fixture.directory, ".git", "index");
+      const index = await readFile(indexPath);
+
+      const outcome = await fixture.patch(["Synthetic issue"], {
+        onCodex: async () => {
+          await writeFile(source, "fixed\n");
+          return 0;
+        },
+      });
+
+      expect(outcome.status, outcome.stderr).toBe(0);
+      expect(outcome.result).toMatchObject({ applied: true, filesChanged: 1 });
+      expect(await readFile(source, "utf8")).toBe("fixed\n");
+      expect(await readFile(indexPath)).toEqual(index);
+    },
+  );
+
   test.each([
     ["assume-unchanged", "edit"],
     ["assume-unchanged", "delete"],

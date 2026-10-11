@@ -7239,16 +7239,25 @@ async function snapshotPatchTree(
     } else {
       // Preserve tracked paths, including ignored and intent-to-add files, without
       // copying cached stat data or flags that can hide working-tree changes.
+      // Git's quoted format preserves raw filename bytes through string transport.
       const entries = await dependencies.runRepositoryCommand(
         "git",
-        ["ls-files", "--stage", "--full-name", "-z", "--", ":/"],
+        [
+          "-c",
+          "core.quotePath=true",
+          "ls-files",
+          "--stage",
+          "--full-name",
+          "--",
+          ":/",
+        ],
         repository,
-        { trim: false },
+        { trim: false, environment: { GIT_LITERAL_PATHSPECS: "0" } },
       );
       await run(["read-tree", "--empty"]);
       await dependencies.runRepositoryCommand(
         "git",
-        ["update-index", "-z", "--index-info"],
+        ["update-index", "--index-info"],
         repository,
         { environment, input: entries },
       );
