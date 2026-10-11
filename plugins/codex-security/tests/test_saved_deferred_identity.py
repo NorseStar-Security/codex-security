@@ -423,8 +423,10 @@ def test_generic_surface_recovery_uses_resolved_candidate_identity(
         expected_disposition = "no_issue_found" if rejected_here else "needs_follow_up"
         assert api_surfaces[0]["disposition"] == expected_disposition
         assert api_surfaces[0]["workerId"] == worker_id
+        assert not any(row["id"] == candidate["id"] for row in coverage["deferred"])
+        assert not any(row["id"] in {"api", rejection["id"]} for row in coverage["surfaces"])
         assert not any(
-            row["id"] == worker_coverage_id(worker_id, generic["id"])
+            row["id"] in {generic["id"], worker_coverage_id(worker_id, generic["id"])}
             for row in coverage["deferred"]
         )
         assert (
@@ -439,6 +441,9 @@ def test_generic_surface_recovery_uses_resolved_candidate_identity(
                 "id": worker_coverage_id(rejection_worker_id, rejection["id"]),
                 "workerId": rejection_worker_id,
             } in coverage["surfaces"]
+        for row in coverage["deferred"]:
+            if row.get("workerId") == worker_id and "surfaceIds" in row:
+                assert row["surfaceIds"] == [api_surfaces[0]["id"]]
     assert recovered["surfaces"] == first_coverage["surfaces"]
     assert recovered["deferred"] == first_coverage["deferred"]
 
@@ -509,7 +514,10 @@ def test_split_deferred_rows_keep_distinct_ids_in_frozen_recovery(
             assert {row["id"] for row in retained} == {
                 worker_coverage_id(worker_id, identity) for identity in expected_ids
             }
-        assert all(row["id"] != worker_coverage_id(worker_id, combined["id"]) for row in retained)
+        assert all(
+            row["id"] not in {combined["id"], worker_coverage_id(worker_id, combined["id"])}
+            for row in retained
+        )
         assert all(row["workerId"] == worker_id for row in retained)
         if payload_field:
             assert all(row[payload_field] == combined[payload_field] for row in retained)
@@ -575,6 +583,10 @@ def test_unnamed_observation_does_not_replace_saved_context(
     for coverage in (first_coverage, replay):
         pending = [row for row in coverage["deferred"] if row["id"] != "scan-stopped"]
         assert expected_output in pending
+        if layout == "worker":
+            assert not any(row["id"] == broad["id"] for row in pending)
+            assert all(row.get("workerId") == worker_id for row in pending)
+            assert all(row["id"].startswith(f"{worker_id}/") for row in pending)
         unnamed = [row for row in pending if row.get("id") != expected_output["id"]]
         assert len(unnamed) == 1
         assert {key: value for key, value in unnamed[0].items() if key != "id"} == expected_raw

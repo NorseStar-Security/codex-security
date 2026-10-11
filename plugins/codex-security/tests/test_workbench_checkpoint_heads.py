@@ -79,7 +79,7 @@ def test_late_head_changes_require_explicit_recovery(
     assert any("/checkpoint-heads/" in path for path in frozen)
     assert not any(path.endswith("checkpoint-head.json") for path in frozen)
     assert not any(
-        row["id"] == worker_coverage_id(worker_id, "review")
+        row["id"] in {"review", worker_coverage_id(worker_id, "review")}
         for row in json.loads((scan_dir / "coverage.json").read_text())["deferred"]
     )
     assert get_scan(state, scan_id)["scan"]["resultsRecoveryNeeded"] is False
@@ -93,6 +93,12 @@ def test_late_head_changes_require_explicit_recovery(
     recovered = scan_command(state, "recover-scan-results", scan_id, environment=environment)
     assert recovered["scan"]["resultsRecoveryNeeded"] is False
     coverage = json.loads((scan_dir / "coverage.json").read_text())
+    assert not any(row["id"] == "review" for row in coverage["deferred"])
+    assert all(
+        row.get("workerId") == worker_id
+        for row in coverage["deferred"]
+        if row["id"] != "scan-stopped"
+    )
     assert any(
         row["id"] == worker_coverage_id(worker_id, "review") for row in coverage["deferred"]
     ) is (selection == "reopened")
@@ -931,6 +937,7 @@ def test_parent_head_selection_matches_frozen_publication_retry(
         json.loads((scan_dir / "coverage.json").read_text()),
     )
     for findings, coverage in (first[0], replay):
+        assert not any(row["id"] == child_work["id"] for row in coverage["deferred"])
         assert {
             **child_work,
             "id": worker_coverage_id(worker_id, child_work["id"]),
