@@ -9,18 +9,25 @@ import { fileURLToPath } from "node:url";
 const script = fileURLToPath(
   new URL("package-deep-codex.mjs", import.meta.url),
 );
-const spawn = childProcess.spawn;
-childProcess.spawn = (command, args, options) => {
-  const executable =
-    options?.env?.PACKAGE_DEEP_EXECUTABLE ??
-    process.env.PACKAGE_DEEP_EXECUTABLE;
-  return spawn(
-    command,
-    executable &&
-      win32.toNamespacedPath(command) === win32.toNamespacedPath(executable)
-      ? [script, ...args]
-      : args,
-    options,
-  );
-};
-syncBuiltinESMExports();
+
+export function installFixtureSpawn(executable) {
+  const spawn = childProcess.spawn;
+  childProcess.spawn = (command, args, options) => {
+    const selected = options?.env?.PACKAGE_DEEP_EXECUTABLE ?? executable;
+    return spawn(
+      command,
+      win32.toNamespacedPath(command) === win32.toNamespacedPath(selected)
+        ? [script, ...args]
+        : args,
+      options,
+    );
+  };
+  syncBuiltinESMExports();
+  return () => {
+    childProcess.spawn = spawn;
+    syncBuiltinESMExports();
+  };
+}
+
+if (process.env.PACKAGE_DEEP_EXECUTABLE !== undefined)
+  installFixtureSpawn(process.env.PACKAGE_DEEP_EXECUTABLE);
