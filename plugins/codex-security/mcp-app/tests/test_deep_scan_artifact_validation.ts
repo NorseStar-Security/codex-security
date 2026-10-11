@@ -39,6 +39,7 @@ try {
   await testDiscoveryValidation(root);
   await testDiscoveryReceipts(root);
   await testCoveragePublicationParity(root);
+  await testWorkerPublicationBeforeCheckpoint(root);
   await testLegacyDeferredPublication(root);
   await testMissingReceiptRepair(root);
   for (const reverse of [false, true])
@@ -362,6 +363,91 @@ async function testMissingReceiptRepair(
     ),
     new Set(["Original valid evidence.\n", "Corrected review evidence.\n"]),
   );
+}
+
+async function testWorkerPublicationBeforeCheckpoint(root: string) {
+  for (const complete of [false, true]) {
+    for (const samples of [Number.MAX_SAFE_INTEGER + 1, "\ud800"]) {
+      const workersRoot = path.join(
+        root,
+        `metadata-${complete}-${typeof samples}`,
+      );
+      const workerRoot = path.join(workersRoot, "first");
+      const output = path.join(workerRoot, "output");
+      await mkdir(output, { recursive: true });
+      const context = {
+        root: output,
+        repoRoot: root,
+        layout: "worker" as const,
+        scanId,
+      };
+      const exclusion = {
+        pattern: "vendor/**",
+        reason: "External code.",
+        metrics: { samples },
+      };
+      const input = draft([finding("preserved", "fixture.py")], {
+        complete,
+        coverage: {
+          completeness: "partial",
+          surfaces: [],
+          explicitExclusions: [exclusion],
+          deferred: [],
+        },
+      });
+      await assert.rejects(
+        recordCodexSecurityWorkerScanDraft(context, input),
+        /unsafe integer|well-formed Unicode/,
+      );
+      assert.deepEqual(
+        await readdir(output),
+        [],
+        "invalid metadata must not create a checkpoint or result",
+      );
+      const corrected = {
+        ...input,
+        complete: false,
+        coverage: {
+          ...input.coverage,
+          explicitExclusions: [{ ...exclusion, metrics: { samples: 1 } }],
+        },
+      };
+      await recordCodexSecurityWorkerScanDraft(context, corrected);
+      const checkpoint = await readFile(
+        path.join(output, "checkpoint-head.json"),
+        "utf8",
+      );
+      const files = await readdir(output, { recursive: true });
+      await assert.rejects(
+        recordCodexSecurityWorkerScanDraft(context, input),
+        /unsafe integer|well-formed Unicode/,
+      );
+      assert.equal(
+        await readFile(path.join(output, "checkpoint-head.json"), "utf8"),
+        checkpoint,
+      );
+      assert.deepEqual(await readdir(output, { recursive: true }), files);
+      const archived = path.join(workerRoot, "attempts", "attempt-01");
+      await mkdir(path.dirname(archived));
+      await rename(output, archived);
+      await mkdir(output);
+      await recordCodexSecurityWorkerScanDraft(context, {
+        ...corrected,
+        findings: [],
+        complete: true,
+      });
+      const accepted = await validateDiscoveryArtifacts(
+        { workersRoot },
+        path.join(output, "result.json"),
+        scanId,
+      );
+      assert.equal(accepted.findings.length, 1);
+      assert.deepEqual(
+        accepted.coverage.explicitExclusions,
+        corrected.coverage.explicitExclusions,
+      );
+    }
+  }
 }
 
 async function testCoveragePublicationParity(root: string) {

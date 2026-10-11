@@ -1,5 +1,8 @@
 import type { JsonObject } from "./types.js";
-import { coverageReceiptComponents } from "./coverage-publication.js";
+import {
+  coverageReceiptComponents,
+  validateRetainedCoverage,
+} from "./coverage-publication.js";
 import { isRecord as isObject, isNonEmptyString } from "./record.js";
 import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
@@ -222,6 +225,8 @@ export async function recordCodexSecurityWorkerScanDraft(
       "scan draft: scanId does not match the coordinator-bound worker scan.",
     );
   }
+
+  validateRetainedCoverage(parsed.coverage);
 
   const scope = context.scope;
   let scoped =
