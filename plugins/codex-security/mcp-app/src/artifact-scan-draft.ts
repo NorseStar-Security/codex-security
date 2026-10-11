@@ -519,7 +519,7 @@ async function preserveScanDraft(
       sources.unshift(progress);
     }
   }
-  const selectedReceiptRefs: string[] = [];
+  const selectedReceiptRefs = new Set<string>();
   const selectedSurfaceIds = new Set<string>();
   for (const selected of [result, ...sources]) {
     const rows = (selected.coverage.surfaces as JsonObject[]).filter(
@@ -527,9 +527,8 @@ async function preserveScanDraft(
     );
     for (const row of rows) {
       selectedSurfaceIds.add(row.id as string);
-      selectedReceiptRefs.push(
-        ...((row.receiptRefs as string[] | undefined) ?? []),
-      );
+      for (const ref of (row.receiptRefs as string[] | undefined) ?? [])
+        selectedReceiptRefs.add(ref);
     }
   }
   const currentCandidateIds = completedCandidateIds(result);
@@ -702,8 +701,15 @@ async function preserveScanDraft(
   );
   // Archived attempts move their receipt files with them. Copy only evidence
   // still retained by this draft into its current, independently bound output.
+  // Superseded surfaces must not reserve a discarded receipt's spelling.
+  const retainedReceiptRefs = new Set(
+    (result.coverage.surfaces as JsonObject[]).flatMap(
+      (row) => (row.receiptRefs as string[] | undefined) ?? [],
+    ),
+  );
   const receiptPaths = new Map<string, string>();
   for (const ref of selectedReceiptRefs) {
+    if (!retainedReceiptRefs.has(ref)) continue;
     const normalized = ref
       .split("/")
       .filter((part) => part !== "" && part !== ".")

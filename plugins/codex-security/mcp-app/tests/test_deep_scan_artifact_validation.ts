@@ -43,6 +43,7 @@ try {
   await testMissingReceiptRepair(root);
   await testSharedMissingReceiptRepairHistory(root);
   await testCurrentReceiptSelectionBeforeArchivedHistory(root);
+  await testCurrentReceiptSelectionBeforeArchivedHistory(root, true);
   await testReducerValidation(root);
   await testEmptyDiscoveryAndReduction(root);
 } finally {
@@ -171,7 +172,7 @@ async function testLegacyDeferredPublication(root: string) {
     scanId,
   );
   const coverage = aggregateDiscoveryCoverage(worker.artifacts, [
-    { ...worker, result: accepted },
+    { ...worker, coverage: accepted.coverage },
   ]);
   const parent = parseScanDraft({ ...result, coverage });
   assert.deepEqual(
@@ -251,25 +252,7 @@ async function testMissingReceiptRepair(root: string) {
   );
   const repaired = await recordCodexSecurityWorkerScanDraft(
     context,
-    draft([], {
-      complete: true,
-      coverage: {
-        completeness: "complete",
-        explicitExclusions: [],
-        deferred: [],
-        surfaces: [
-          {
-            id: "api",
-            label: "API",
-            disposition: "no_issue_found",
-            receiptRefs: ["artifacts/replacement.md"],
-          },
-        ],
-        resolvedDeferred: [
-          { id: "review", reason: "Source review completed." },
-        ],
-      },
-    }),
+    replacementDraft,
   );
   assert.match(
     repaired.warnings.join("\n"),
@@ -389,7 +372,7 @@ async function testCoveragePublicationParity(root: string) {
       scanId,
     );
     const coverage = aggregateDiscoveryCoverage(worker.artifacts, [
-      { ...worker, result: accepted },
+      { ...worker, coverage: accepted.coverage },
     ]);
     assert.deepEqual(coverage.deferred[0].receiptRefs, {
       external: "opaque metadata",
@@ -1261,7 +1244,10 @@ async function testSharedMissingReceiptRepairHistory(root: string) {
   );
 }
 
-async function testCurrentReceiptSelectionBeforeArchivedHistory(root: string) {
+async function testCurrentReceiptSelectionBeforeArchivedHistory(
+  root: string,
+  candidate = false,
+) {
   for (const repairId of ["reader", "writer"]) {
     for (const reverse of [false, true]) {
       const refs = {
@@ -1275,19 +1261,25 @@ async function testCurrentReceiptSelectionBeforeArchivedHistory(root: string) {
           completeness: "partial",
           explicitExclusions: [],
           deferred: [
-            { id: "review", reason: "Review remains.", surfaceIds: [repairId] },
+            {
+              id: candidate ? repairId : "review",
+              ...(candidate ? { candidateId: repairId } : {}),
+              reason: "Review remains.",
+              surfaceIds: [repairId],
+            },
           ],
           surfaces: Object.entries(refs).map(([id, ref]) => ({
             id,
             label: id,
             disposition: id === repairId ? "needs_follow_up" : "no_issue_found",
+            ...(candidate && id === repairId ? { candidateId: repairId } : {}),
             receiptRefs: [ref],
           })),
         },
       });
       if (reverse) old.coverage.surfaces.reverse();
       const worker = await createWorker(
-        path.join(root, `selected-${repairId}-${reverse}`),
+        path.join(root, `selected-${repairId}-${reverse}-${candidate}`),
         "first",
         old,
       );
@@ -1314,23 +1306,37 @@ async function testCurrentReceiptSelectionBeforeArchivedHistory(root: string) {
       );
       await recordCodexSecurityWorkerScanDraft(
         { root: output, repoRoot: root, layout: "worker", scanId },
-        draft([], {
-          complete: true,
-          coverage: {
-            completeness: "complete",
-            explicitExclusions: [],
-            deferred: [],
-            surfaces: [
-              {
-                id: repairId,
-                label: repairId,
-                disposition: "no_issue_found",
-                receiptRefs: ["artifacts/replacement.md"],
-              },
-            ],
-            resolvedDeferred: [{ id: "review", reason: "Review completed." }],
+        draft(
+          candidate
+            ? [
+                {
+                  ...finding(repairId, "src/fixture.py"),
+                  provenance: { source: "local_plugin", candidateId: repairId },
+                },
+              ]
+            : [],
+          {
+            complete: true,
+            coverage: {
+              completeness: "complete",
+              explicitExclusions: [],
+              deferred: [],
+              surfaces: candidate
+                ? []
+                : [
+                    {
+                      id: repairId,
+                      label: repairId,
+                      disposition: "no_issue_found",
+                      receiptRefs: ["artifacts/replacement.md"],
+                    },
+                  ],
+              resolvedDeferred: candidate
+                ? []
+                : [{ id: "review", reason: "Review completed." }],
+            },
           },
-        }),
+        ),
       );
       const result = await validateDiscoveryArtifacts(
         worker.artifacts,
@@ -1338,7 +1344,8 @@ async function testCurrentReceiptSelectionBeforeArchivedHistory(root: string) {
         scanId,
       );
       assert.deepEqual(result.coverage.deferred, []);
-      assert.equal(result.coverage.surfaces.length, 2);
+      assert.equal(result.coverage.surfaces.length, candidate ? 1 : 2);
+      assert.equal(result.findings.length, candidate ? 1 : 0);
       const kept = result.coverage.surfaces.find(
         (row: JsonObject) => row.id === keptId,
       );
@@ -1349,10 +1356,12 @@ async function testCurrentReceiptSelectionBeforeArchivedHistory(root: string) {
         await readFile(path.join(output, kept.receiptRefs[0]), "utf8"),
         await readFile(path.join(archive, refs[keptId]), "utf8"),
       );
-      const repaired = result.coverage.surfaces.find(
-        (row: JsonObject) => row.id === repairId,
-      );
-      assert.deepEqual(repaired.receiptRefs, ["artifacts/replacement.md"]);
+      if (!candidate) {
+        const repaired = result.coverage.surfaces.find(
+          (row: JsonObject) => row.id === repairId,
+        );
+        assert.deepEqual(repaired.receiptRefs, ["artifacts/replacement.md"]);
+      }
       assert.equal(
         await readFile(path.join(archive, "result.json"), "utf8"),
         oldResult,

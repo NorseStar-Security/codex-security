@@ -1,6 +1,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { dirname, relative, sep } from "node:path";
 import type { JsonObject } from "../types.js";
+import type { AcceptedDiscovery } from "./worker-runner.js";
 import { artifactSourcePath } from "../artifact-io.js";
 import {
   coverageReceiptComponents,
@@ -36,11 +37,11 @@ export interface ReducerArtifactValidation {
 /** Reduction combines findings; it does not complete the source workers' review. */
 export function aggregateDiscoveryCoverage(
   artifacts: DeepScanArtifacts,
-  discoveries: { id: string; resultPath: string; result: ScanDraftInput }[],
+  discoveries: Pick<AcceptedDiscovery, "id" | "resultPath" | "coverage">[],
 ): JsonObject {
   const coverage: JsonObject = {
     completeness: discoveries.every(
-      ({ result }) => result.coverage.completeness === "complete",
+      ({ coverage }) => coverage.completeness === "complete",
     )
       ? "complete"
       : "partial",
@@ -49,7 +50,7 @@ export function aggregateDiscoveryCoverage(
     deferred: [],
   };
   for (const worker of discoveries) {
-    const source = structuredClone(worker.result.coverage);
+    const source = structuredClone(worker.coverage);
     const prefix = relative(artifacts.scanDir, dirname(worker.resultPath))
       .split(sep)
       .join("/");

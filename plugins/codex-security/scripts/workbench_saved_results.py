@@ -916,7 +916,7 @@ def _generic_surface_updates(
                                             f"Saved coverage receipt: duplicate artifact path: {previous} and {normalized}"
                                         )
                                         replaceable = True
-                                    else:
+                                    elif not replaceable:
                                         receipt_paths[key] = normalized
                             if replaceable:
                                 replaced_receipt = True

@@ -963,22 +963,14 @@ async function testPartialWorkerCoverageSurvivesParentCompletion() {
     await runWorkbench(["complete-scan", "--scan-id", run.scanId]);
     const coverage = await readJson(run.scanDir, "coverage.json");
     assert.equal(coverage.completeness, "partial");
-    assert.equal(coverage.surfaces.length, 4);
-    assert.equal(
-      new Set(coverage.surfaces.map((row: { id: string }) => row.id)).size,
-      4,
-    );
-    assert.equal(coverage.explicitExclusions.length, 4);
-    assert.equal(
-      new Set(coverage.explicitExclusions.map((row: { id: string }) => row.id))
-        .size,
-      4,
-    );
-    assert.equal(coverage.deferred.length, 4);
-    assert.equal(
-      new Set(coverage.deferred.map((row: { id: string }) => row.id)).size,
-      4,
-    );
+    for (const field of ["surfaces", "explicitExclusions", "deferred"]) {
+      assert.equal(coverage[field].length, 4, field);
+      assert.equal(
+        new Set(coverage[field].map((row: { id: string }) => row.id)).size,
+        4,
+        field,
+      );
+    }
     assert.equal(coverage.openQuestions.length, 2);
     for (const row of coverage.surfaces) {
       if (row.label !== "Request entry") continue;

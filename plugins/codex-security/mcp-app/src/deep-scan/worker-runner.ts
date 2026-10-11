@@ -38,7 +38,7 @@ import type {
 export interface AcceptedDiscovery {
   id: string;
   resultPath: string;
-  result: ScanDraftInput;
+  coverage: ScanDraftInput["coverage"];
   completionSequence: number;
 }
 
@@ -148,7 +148,7 @@ export class DeepScanWorkerRunner {
       artifactDir,
       attempt: 1,
     });
-    let discoveryResult: ScanDraftInput | undefined;
+    let discoveryCoverage: ScanDraftInput["coverage"] | undefined;
     let outcome = await this.runWorkerWithRetries({
       workerId,
       kind: "discovery",
@@ -158,11 +158,9 @@ export class DeepScanWorkerRunner {
       artifactContext: { root: artifactDir, layout: "worker" },
       subagents: run.config.subagents,
       validate: async () => {
-        discoveryResult = await validateDiscoveryArtifacts(
-          artifacts,
-          resultPath,
-          run.scanId,
-        );
+        discoveryCoverage = (
+          await validateDiscoveryArtifacts(artifacts, resultPath, run.scanId)
+        ).coverage;
       },
     });
     if (outcome.status === "succeeded" && this.options.signal.aborted) {
@@ -178,7 +176,7 @@ export class DeepScanWorkerRunner {
       );
       outcome = { status: "canceled" };
     }
-    if (!discoveryResult) {
+    if (!discoveryCoverage) {
       await fs.rm(resultPath, { force: true });
     }
     if (outcome.status === "failed") {
@@ -237,7 +235,7 @@ export class DeepScanWorkerRunner {
       worker: {
         id: workerId,
         resultPath,
-        result: discoveryResult!,
+        coverage: discoveryCoverage!,
         completionSequence: persisted.completionSequence,
       },
     };

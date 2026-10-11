@@ -503,3 +503,60 @@ def test_stopped_publication_recovers_unrepaired_failed_worker_receipt_collision
     assert manifest["scan"]["status"] == "interrupted"
     assert isinstance(manifest["scan"]["sealedAt"], str)
     assert all(path.read_bytes() == contents for path, contents in originals.items())
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_missing_historical_receipt_does_not_hide_valid_case_variant(tmp_path, reverse):
+    refs = ["artifacts/review.md", "artifacts/Review.md"]
+    if reverse:
+        refs.reverse()
+    surface = {"id": "api", "label": "API", "disposition": "no_issue_found"}
+    old = saved_draft("coverage-scan", complete=True, surfaces=[{**surface, "receiptRefs": refs}])
+    source = worker(tmp_path, "first", old)
+    output = Path(source["artifact_dir"])
+    (output / "artifacts/review.md").unlink()
+    (output / "artifacts/Review.md").write_text("Retained historical evidence.\n")
+    if (output / "artifacts/review.md").exists():
+        pytest.skip("This regression requires case-sensitive receipt paths.")
+    (output / "artifacts/replacement.md").write_text("Current review evidence.\n")
+    prefix = output.relative_to(tmp_path).as_posix() + "/"
+    parent = copy.deepcopy(old)
+    parent["coverage"]["surfaces"] = [
+        {
+            **surface,
+            "id": "first/api",
+            "workerId": "first",
+            "receiptRefs": [prefix + ref for ref in refs],
+        }
+    ]
+    write_saved_parent(tmp_path, parent, 200)
+    current = saved_draft(
+        "coverage-scan",
+        complete=True,
+        surfaces=[{**surface, "receiptRefs": ["artifacts/replacement.md"]}],
+    )
+    checkpoint = write_checkpoint(output / "checkpoints", current)
+    os.utime(checkpoint, ns=(300, 300))
+    warnings = []
+    documents = saved.merge_saved_results(
+        tmp_path,
+        "coverage-scan",
+        saved_binding("deep_repository", repository="synthetic"),
+        [source],
+        warnings,
+        stopped=True,
+        reason="Interrupted retry before checkpoint-head publication.",
+    )
+    assert documents is not None
+    retained = documents[2]["surfaces"][0]["receiptRefs"]
+    assert set(retained) == {prefix + "artifacts/Review.md", prefix + "artifacts/replacement.md"}
+    assert any("Replaced invalid saved coverage receipt" in warning for warning in warnings)
+    scan = {
+        "completedAt": "synthetic-time",
+        "sealedAt": "synthetic-time",
+        "artifacts": [
+            {"path": ref, "sha256": hashlib.sha256((tmp_path / ref).read_bytes()).hexdigest()}
+            for ref in retained
+        ],
+    }
+    finalizer._validate_existing_seal(tmp_path, scan)
