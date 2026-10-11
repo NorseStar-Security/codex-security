@@ -1110,6 +1110,8 @@ def _prepare_worker_coverage_recovery(
     # the existing per-worker chronology reconcile those originals exactly once.
     # Keep parent-only evidence when its bound worker source is unavailable.
     for draft in parents:
+        if not draft["coverage"]:
+            continue
         for field in fields:
             rows = draft["coverage"].get(field, [])
             if isinstance(rows, list):
