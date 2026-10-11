@@ -2708,6 +2708,34 @@ export function resolveCodexCommand(
   return { command: resolveBundledCodexExecutable() };
 }
 
+export async function codexExecutableReadPaths(
+  command: string,
+): Promise<string[]> {
+  const executable = await realpath(command);
+  const packageJson = resolve(dirname(executable), "..", "package.json");
+  try {
+    const metadata = JSON.parse(await readFile(packageJson, "utf8"));
+    if (
+      metadata?.name !== "@openai/codex" ||
+      typeof metadata.bin?.codex !== "string"
+    )
+      return [executable];
+    const launcher = await realpath(
+      resolve(dirname(packageJson), metadata.bin.codex),
+    );
+    if (launcher !== executable) return [executable];
+  } catch {
+    // A custom executable need not belong to a readable, valid npm package.
+    return [executable];
+  }
+
+  // npm's entrypoint launches a native binary, which Linux re-executes in the sandbox.
+  return [
+    executable,
+    await realpath(resolveBundledCodexExecutable(packageJson)),
+  ];
+}
+
 export async function bootstrapPlugin(
   codexHome: string,
   pluginRoot: string,
