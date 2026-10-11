@@ -217,6 +217,8 @@
 - retain requested repository paths in output ([#1045](https://github.com/openai/codex-security/pull/1045))
 - keep dashboards responsive and show observed usage ([#1276](https://github.com/openai/codex-security/pull/1276))
 - share scan result validation across scan modes ([#920](https://github.com/openai/codex-security/pull/920))
+- preserve process paths and environment values ([#1429](https://github.com/openai/codex-security/pull/1429))
+- mark source review complete before custom validation ([#1252](https://github.com/openai/codex-security/pull/1252))
 
 <!-- release-section: highlights:end -->
 
