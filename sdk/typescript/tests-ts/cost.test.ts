@@ -2,6 +2,7 @@ import { jsonLines } from "./support/json.js";
 import { runNodePython } from "./support/python-probe.js";
 import * as filesystem from "node:fs/promises";
 import { appendFile, writeFile } from "node:fs/promises";
+import * as fs from "node:fs/promises";
 import { join, parse, sep } from "node:path";
 import { Codex } from "@openai/codex-sdk";
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
@@ -152,6 +153,107 @@ test.each([
 });
 
 describe("scan cost", () => {
+  test("ignores token-count events without a usage snapshot in both readers", async () => {
+    const home = await codexHome();
+    const path = await writeSession(
+      home,
+      childUuid7Thread,
+      {},
+      { parent: scanThreadId },
+    );
+    await writeFile(
+      path,
+      jsonLines([
+        ...ownershipRollout([]),
+        {
+          type: "event_msg",
+          timestamp: "2026-07-26T12:03:00Z",
+          payload: {
+            type: "token_count",
+            info: null,
+            rate_limits: { primary: { used_percent: 5 } },
+          },
+        },
+      ]) + "\n",
+    );
+    const tracker = new ScanCostTracker({
+      codexHome: home,
+      model: "gpt-6-astra",
+    });
+    tracker.start(scanThreadId);
+    expect((await tracker.stop()).usage).toEqual(ownedSdkUsage);
+    expect(readPythonRolloutUsage(BUNDLED_PLUGIN_ROOT, path)).toEqual({
+      usage: ownedPythonUsage,
+      warnings: [],
+    });
+  });
+
+  test("does not reopen unchanged rollouts and reads appended worker usage", async () => {
+    const { home, parent, worker } = await workerSessionFixture();
+    await writeSession(home, "unrelated-thread", {
+      input_tokens: 900,
+      output_tokens: 90,
+    });
+    const tracker = new ScanCostTracker({
+      codexHome: home,
+      model: "gpt-6-astra",
+    });
+    tracker.start("scan-thread");
+    await tracker.refresh();
+    const opened = spyOn(fs, "open");
+    try {
+      await tracker.refresh();
+      expect(opened).not.toHaveBeenCalled();
+      await appendFile(
+        worker,
+        jsonLines([
+          {
+            type: "event_msg",
+            payload: {
+              type: "token_count",
+              info: {
+                total_token_usage: { input_tokens: 200, output_tokens: 20 },
+              },
+            },
+          },
+        ]) + "\n",
+      );
+      const snapshot = await tracker.refresh();
+      expect(opened.mock.calls.map(([path]) => path)).toEqual([worker]);
+      expect(snapshot.usage).toMatchObject({
+        input_tokens: 300,
+        output_tokens: 30,
+      });
+      expect(opened.mock.calls.map(([path]) => path)).not.toContain(parent);
+    } finally {
+      opened.mockRestore();
+      await tracker.stop();
+    }
+  });
+
+  test("reports known usage even when model pricing is unavailable", async () => {
+    const home = await codexHome();
+    await writeSession(home, "scan-thread", {
+      input_tokens: 100,
+      output_tokens: 10,
+    });
+    const usages: unknown[] = [];
+    const tracker = new ScanCostTracker({
+      codexHome: home,
+      model: "synthetic-unpriced-model",
+      onUsage: (usage) => usages.push(usage),
+    });
+    tracker.start("scan-thread");
+    const snapshot = await tracker.stop();
+    expect(snapshot.cost).toBeNull();
+    expect(snapshot.usage).toMatchObject({
+      input_tokens: 100,
+      output_tokens: 10,
+    });
+    expect(usages).toHaveLength(1);
+    expect(usages[0]).toEqual(snapshot.usage);
+  });
+
   test("shows distinct token categories without adding cached input twice", () => {
     expect(
       formatTokenUsage({
@@ -218,6 +320,45 @@ describe("scan cost", () => {
       },
     });
   });
+  test.each(["gpt-6-sol", "openai.gpt-6-sol"])(
+    "prices every token category and both context ranges for %s",
+    (model) => {
+      expect(
+        estimateScanCost(model, {
+          input_tokens: 1_000_000,
+          cached_input_tokens: 200_000,
+          cache_write_input_tokens: 300_000,
+          output_tokens: 100_000,
+        }),
+      ).toEqual({
+        model,
+        inputTokens: 1_000_000,
+        cachedInputTokens: 200_000,
+        cacheWriteInputTokens: 300_000,
+        outputTokens: 100_000,
+        estimatedUsd: 2.79,
+        estimatedUsdRange: { min: 2.79, max: 5.08, context: "unknown" },
+        pricing: {
+          source: "https://developers.openai.com/api/docs/models/gpt-6-sol",
+          asOf: "2026-10-10",
+          serviceTier: "standard",
+          context: "short",
+          usdPerMillionTokens: {
+            input: 2,
+            cacheRead: 0.2,
+            cacheWrite: 2.5,
+            output: 10,
+          },
+          longContextUsdPerMillionTokens: {
+            input: 4,
+            cacheRead: 0.4,
+            cacheWrite: 5,
+            output: 15,
+          },
+        },
+      });
+    },
+  );
   test.each([
     [{ cache_write_tokens: 15 }, 15],
     [{ cache_write_input_tokens: 0, cache_write_tokens: 15 }, 15],
@@ -869,6 +1010,7 @@ describe("live scan cost tracking", () => {
         await writeSession(home, "middle", usage(20), {
           parent: "scan-thread",
         });
+        await expect(tracker.refresh()).rejects.toMatchObject({ code });
         await expect(tracker.refresh()).rejects.toMatchObject({ code });
         denied = false;
         const snapshot = await tracker.stop();
