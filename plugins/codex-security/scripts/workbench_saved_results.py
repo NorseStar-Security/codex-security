@@ -895,6 +895,7 @@ def _generic_surface_updates(
             refs = copy.deepcopy(latest_surface.get("receiptRefs", []))
             update["receiptRefs"] = refs
             replaced_receipt = False
+            replacement_paths = dict(receipt_paths)
             if isinstance(refs, list):
                 repaired = (
                     not reopening and bool(refs) and all(receipt_error(ref) is None for ref in refs)
@@ -903,9 +904,10 @@ def _generic_surface_updates(
                     for ref in refs:
                         normalized = _require_portable_relative_path(ref, "Saved coverage receipt")
                         key = normalized.lower()
-                        if key in receipt_paths and receipt_paths[key] != normalized:
+                        if key in replacement_paths and replacement_paths[key] != normalized:
                             repaired = False
-                        receipt_paths[key] = normalized
+                            break
+                        replacement_paths[key] = normalized
                 for _, row in matches:
                     previous_refs = row.get("receiptRefs", [])
                     for ref in previous_refs if isinstance(previous_refs, list) else []:
@@ -924,14 +926,14 @@ def _generic_surface_updates(
                                     replaceable = True
                                 else:
                                     key = normalized.lower()
-                                    previous = receipt_paths.get(key)
+                                    previous = replacement_paths.get(key)
                                     if previous is not None and previous != normalized:
                                         failure = ContractError(
                                             f"Saved coverage receipt: duplicate artifact path: {previous} and {normalized}"
                                         )
                                         replaceable = True
                                     elif not replaceable:
-                                        receipt_paths[key] = normalized
+                                        replacement_paths[key] = normalized
                             if replaceable:
                                 replaced_receipt = True
                                 if receipt_warnings is not None:
@@ -953,6 +955,7 @@ def _generic_surface_updates(
                 or row.get("disposition") in {"needs_follow_up", surface.get("disposition")}
             )
             if (owner, update) not in updates:
+                receipt_paths.update(replacement_paths)
                 updates.append((owner, update))
     return replaced, updates
 
@@ -1036,18 +1039,17 @@ def _aggregate_worker_coverage_rows(rows: list[Any], worker_id: str, field: str)
     for index, original in enumerate(rows):
         row = copy.deepcopy(original)
         if isinstance(row, dict) and field != "openQuestions":
-            missing = "id" not in row
-            identity = str(index) if missing else row["id"]
-            if isinstance(identity, str):
-                base = identity
-                if missing or identity in emitted:
-                    suffix = 2
-                    while identity in reserved:
-                        identity = f"{base}-{suffix}"
-                        suffix += 1
-                reserved.add(identity)
-                emitted.add(identity)
-                row["id"] = identity
+            generated = not isinstance(row.get("id"), str)
+            identity = str(index) if generated else row["id"]
+            base = identity
+            if generated or identity in emitted:
+                suffix = 2
+                while identity in reserved:
+                    identity = f"{base}-{suffix}"
+                    suffix += 1
+            reserved.add(identity)
+            emitted.add(identity)
+            row["id"] = identity
         projected.append(
             _coverage_comparison_row(_project_worker_coverage_row(row, worker_id, field), field)
         )

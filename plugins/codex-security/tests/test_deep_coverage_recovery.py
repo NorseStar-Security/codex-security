@@ -277,8 +277,9 @@ def test_legacy_duplicate_tasks_match_the_accepted_aggregate_and_keep_distinct_o
 @pytest.mark.parametrize(
     "receipt", ["artifacts/review.md", "artifacts/./review.md", "artifacts//review.md"]
 )
+@pytest.mark.parametrize("exclusion_id", [{}, {"id": None}, {"id": 7}, {"id": "external"}])
 def test_projection_normalizes_surface_receipts_without_rewriting_extension_metadata(
-    tmp_path, receipt
+    tmp_path, receipt, exclusion_id
 ):
     draft = saved_draft(
         "coverage-scan",
@@ -297,7 +298,7 @@ def test_projection_normalizes_surface_receipts_without_rewriting_extension_meta
     )
     draft["coverage"]["explicitExclusions"] = [
         {
-            "id": "external",
+            **exclusion_id,
             "pattern": "vendor/**",
             "reason": "External code.",
             "receiptRefs": ["opaque/missing.md"],
@@ -307,9 +308,10 @@ def test_projection_normalizes_surface_receipts_without_rewriting_extension_meta
     source = worker(tmp_path, "first", draft)
     parent = copy.deepcopy(draft)
     for field in ("surfaces", "explicitExclusions", "deferred"):
-        for row in parent["coverage"][field]:
+        for index, row in enumerate(parent["coverage"][field]):
             row["workerId"] = "first"
-            row["id"] = f"first/{row['id']}"
+            identity = row["id"] if isinstance(row.get("id"), str) else str(index)
+            row["id"] = f"first/{identity}"
     parent["coverage"]["surfaces"][0]["receiptRefs"] = [
         "artifacts/deep_discovery/workers/first/output/artifacts/review.md"
     ]
@@ -320,10 +322,19 @@ def test_projection_normalizes_surface_receipts_without_rewriting_extension_meta
     assert (
         coverage["surfaces"][0]["receiptRefs"] == parent["coverage"]["surfaces"][0]["receiptRefs"]
     )
-    assert coverage["explicitExclusions"] == parent["coverage"]["explicitExclusions"]
+    assert len(coverage["explicitExclusions"]) == 1
+    exclusion = coverage["explicitExclusions"][0]
+    expected = parent["coverage"]["explicitExclusions"][0]
+    if isinstance(exclusion_id.get("id"), str):
+        assert exclusion == expected
+    else:
+        assert {key: value for key, value in exclusion.items() if key != "id"} == {
+            key: value for key, value in expected.items() if key != "id"
+        }
     task = next(row for row in coverage["deferred"] if row["id"] == "first/review")
     assert task["receiptRefs"] == {"external": "opaque metadata"}
     assert task["surfaceIds"] == ["first/api"]
+    assert json.loads((Path(source["artifact_dir"]) / "result.json").read_text()) == draft
 
 
 @pytest.mark.parametrize("reverse_sources", [False, True])
@@ -745,3 +756,122 @@ def test_receipt_repair_preserves_selected_surface_metadata(tmp_path, scenario, 
             in surfaces[0]["receiptRefs"]
         )
     assert all(path.read_bytes() == contents for path, contents in originals.items())
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("checkpoint", ["absent", "same", "conflicting", "distinct"])
+def test_unselected_receipt_spelling_cannot_replace_accepted_evidence(
+    tmp_path, reverse, checkpoint
+):
+    accepted_name, unselected_name = (
+        ("Review.md", "review.md") if reverse else ("review.md", "Review.md")
+    )
+    surface = {
+        "id": "api",
+        "label": "Accepted review",
+        "disposition": "no_issue_found",
+        "receiptRefs": [f"artifacts/{accepted_name}"],
+    }
+    accepted = saved_draft("coverage-scan", complete=True, surfaces=[surface])
+    source = worker(tmp_path, "first", accepted)
+    output = Path(source["artifact_dir"])
+    for name, text in (
+        (accepted_name, "Accepted receipt bytes."),
+        (unselected_name, "Unselected receipt bytes."),
+        ("distinct.md", "Independent receipt bytes."),
+    ):
+        (output / "artifacts" / name).write_text(text)
+    selected = write_checkpoint(output / "checkpoints", accepted)
+    os.utime(selected, ns=(200, 200))
+    (output / "checkpoint-head.json").write_text(json.dumps({"checkpoint": selected.name}))
+    os.utime(output / "checkpoint-head.json", ns=(250, 250))
+    os.utime(output / "result.json", ns=(300, 300))
+    if checkpoint != "absent":
+        name = {
+            "same": accepted_name,
+            "conflicting": unselected_name,
+            "distinct": "distinct.md",
+        }[checkpoint]
+        pending = write_checkpoint(
+            output / "checkpoints",
+            saved_draft(
+                "coverage-scan",
+                surfaces=[{**surface, "receiptRefs": [f"artifacts/{name}"]}],
+            ),
+        )
+        os.utime(pending, ns=(400, 400))
+    originals = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    documents = recover(tmp_path, [source], project=True)
+    replay = recover(
+        tmp_path, [source], project=True, frozen=documents[0]["scan"]["preservedSources"]
+    )
+    for recovered in (documents, replay):
+        assert recovered[2]["surfaces"] == [
+            {
+                **surface,
+                "id": "first/api",
+                "workerId": "first",
+                "receiptRefs": [
+                    f"{output.relative_to(tmp_path).as_posix()}/artifacts/{accepted_name}"
+                ],
+            }
+        ]
+    assert all(path.read_bytes() == content for path, content in originals.items())
+
+
+@pytest.mark.parametrize("unselected", [False, True])
+def test_non_emitted_repair_cannot_reserve_another_surfaces_receipt(tmp_path, unselected):
+    def surface(identity, names):
+        return {
+            "id": identity,
+            "label": identity,
+            "disposition": "no_issue_found",
+            "receiptRefs": [f"artifacts/{name}" for name in names],
+        }
+
+    accepted = saved_draft(
+        "coverage-scan",
+        complete=True,
+        surfaces=[surface("reader", ["reader.md"]), surface("writer", ["writer.md"])],
+    )
+    source = worker(tmp_path, "first", accepted)
+    output = Path(source["artifact_dir"])
+    for name in ["reader.md", "writer.md", "review.md", "Review.md"]:
+        (output / "artifacts" / name).write_text(f"Evidence from {name}.")
+    history = saved_draft(
+        "coverage-scan", complete=True, surfaces=[surface("writer", ["Review.md", "missing.md"])]
+    )
+    for modified, draft in [(100, history), (200, accepted)]:
+        checkpoint = write_checkpoint(output / "checkpoints", draft)
+        os.utime(checkpoint, ns=(modified, modified))
+    (output / "checkpoint-head.json").write_text(json.dumps({"checkpoint": checkpoint.name}))
+    os.utime(output / "checkpoint-head.json", ns=(250, 250))
+    os.utime(output / "result.json", ns=(300, 300))
+    if unselected:
+        checkpoint = write_checkpoint(
+            output / "checkpoints",
+            saved_draft("coverage-scan", surfaces=[surface("reader", ["review.md"])]),
+        )
+        os.utime(checkpoint, ns=(400, 400))
+    originals = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    warnings = []
+    documents = saved.merge_saved_results(
+        tmp_path,
+        "coverage-scan",
+        saved_binding("deep_repository", repository="synthetic"),
+        [source],
+        warnings,
+        stopped=True,
+        reason="Source review stopped.",
+        project_worker_coverage=True,
+    )
+    assert documents is not None
+    surfaces = {row["id"]: row for row in documents[2]["surfaces"]}
+    prefix = output.relative_to(tmp_path).as_posix() + "/artifacts/"
+    assert surfaces["first/reader"]["receiptRefs"] == [prefix + "reader.md"]
+    assert set(surfaces["first/writer"]["receiptRefs"]) == {
+        prefix + "writer.md",
+        prefix + "Review.md",
+    }
+    assert all("missing.md" in warning for warning in warnings)
+    assert all(path.read_bytes() == content for path, content in originals.items())
