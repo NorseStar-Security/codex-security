@@ -19,6 +19,7 @@ import {
 } from "node:fs";
 import {
   chmod,
+  copyFile,
   lstat,
   mkdir,
   mkdtemp,
@@ -7008,26 +7009,17 @@ async function snapshotPatchState(
   try {
     await dependencies.runRepositoryCommand(
       "git",
-      ["rev-parse", "--show-toplevel", "--verify", "--quiet", "HEAD"],
+      ["rev-parse", "--show-toplevel"],
       repository,
       { environment: { LC_ALL: "C" } },
     );
   } catch (error) {
-    if (isJsonObject(error) && error["code"] === 1) {
-      // An unborn symbolic HEAD has no commit; malformed refs still fail.
-      await dependencies.runRepositoryCommand(
-        "git",
-        ["symbolic-ref", "--quiet", "HEAD"],
-        repository,
-      );
-    } else {
-      const message = errorMessage(error);
-      if (
-        !message.includes("not a git repository") &&
-        message !== "git is not available on a trusted PATH."
-      )
-        throw error;
-    }
+    const message = errorMessage(error);
+    if (
+      !message.includes("not a git repository") &&
+      message !== "git is not available on a trusted PATH."
+    )
+      throw error;
     return snapshotPatchDirectory(repository);
   }
   return snapshotPatchTree(repository, dependencies);
@@ -7221,7 +7213,31 @@ async function snapshotPatchTree(
       environment,
     });
   try {
-    await run(["read-tree", "HEAD"]);
+    let hasHead = true;
+    try {
+      await run(["rev-parse", "--verify", "--quiet", "HEAD"]);
+    } catch (error) {
+      if (!isJsonObject(error) || error["code"] !== 1) throw error;
+      // An unborn symbolic HEAD has no commit; malformed refs still fail.
+      await run(["symbolic-ref", "--quiet", "HEAD"]);
+      hasHead = false;
+    }
+    if (hasHead) {
+      await run(["read-tree", "HEAD"]);
+    } else {
+      const index = await dependencies.runRepositoryCommand(
+        "git",
+        ["rev-parse", "--git-path", "index"],
+        repository,
+      );
+      try {
+        // Preserve staged ignored files without updating the user's index.
+        await copyFile(resolve(repository, index), environment.GIT_INDEX_FILE);
+      } catch (error) {
+        if (!isJsonObject(error) || error["code"] !== "ENOENT") throw error;
+        await run(["read-tree", "--empty"]);
+      }
+    }
     await run(["--literal-pathspecs", "add", "--all"]);
     return await run(["write-tree"]);
   } finally {

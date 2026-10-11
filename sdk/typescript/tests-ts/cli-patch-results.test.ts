@@ -182,20 +182,34 @@ lines.on("line", (line) => {
     ["directory", true],
     ["unborn Git", false],
     ["unborn Git", true],
+    ["committed Git", false],
+    ["committed Git", true],
   ] as const)(
     "checks patch changes in %s with source edits: %j",
     async (kind, apply) => {
-      const initializeGit = kind === "unborn Git";
+      const initializeGit = kind !== "directory";
       await using fixture = await repositoryFixture({
         initializeGit,
-        initialCommit: false,
+        initialCommit: kind === "committed Git",
       });
-      const index = initializeGit ? await fixture.git("write-tree") : null;
+      if (initializeGit) {
+        await writeFile(join(fixture.directory, ".gitignore"), "dist/\n");
+        await mkdir(join(fixture.directory, "dist"));
+        await writeFile(join(fixture.directory, "staged.ts"), "staged\n");
+        await fixture.git("add", ".gitignore", "staged.ts");
+      }
+      const indexPath = join(fixture.directory, ".git", "index");
+      const index = initializeGit ? await readFile(indexPath) : null;
       const metadata = join(fixture.directory, initializeGit ? ".git" : ".svn");
       await mkdir(metadata, { recursive: true });
       const outcome = await fixture.patch(["Synthetic issue"], {
         onCodex: async () => {
           await writeFile(join(metadata, "synthetic-state"), "updated\n");
+          if (initializeGit)
+            await writeFile(
+              join(fixture.directory, "dist", "test-output.log"),
+              "test ran\n",
+            );
           if (apply)
             await writeFile(join(fixture.directory, "app.ts"), "fixed\n");
           return 0;
@@ -207,11 +221,69 @@ lines.on("line", (line) => {
         filesChanged: apply ? 1 : 0,
         files: apply ? ["app.ts"] : [],
       });
-      if (index !== null) expect(await fixture.git("write-tree")).toBe(index);
+      if (index !== null) expect(await readFile(indexPath)).toEqual(index);
       if (!apply)
         expect(outcome.result.error).toMatchObject({
           code: "NO_PATCH_APPLIED",
         });
+    },
+  );
+
+  test("tracks force-staged ignored files in unborn Git without changing the index", async () => {
+    await using fixture = await repositoryFixture({ initialCommit: false });
+    await writeFile(join(fixture.directory, ".gitignore"), "ignored.ts\n");
+    const source = join(fixture.directory, "ignored.ts");
+    await writeFile(source, "original\n");
+    await fixture.git("add", "--force", "ignored.ts");
+    const indexPath = join(fixture.directory, ".git", "index");
+    const index = await readFile(indexPath);
+
+    const outcome = await fixture.patch(["Synthetic issue"], {
+      onCodex: async () => {
+        await writeFile(source, "fixed\n");
+        return 0;
+      },
+    });
+
+    expect(outcome.status, outcome.stderr).toBe(0);
+    expect(outcome.result).toMatchObject({
+      applied: true,
+      filesChanged: 1,
+      files: ["ignored.ts"],
+    });
+    expect(await readFile(indexPath)).toEqual(index);
+  });
+
+  test.each([false, true])(
+    "checks unborn Git without an index with source edits: %j",
+    async (apply) => {
+      await using fixture = await repositoryFixture({ initialCommit: false });
+      const indexPath = join(fixture.directory, ".git", "index");
+      await rm(indexPath);
+      await writeFile(join(fixture.directory, ".gitignore"), "dist/\n");
+      await mkdir(join(fixture.directory, "dist"));
+
+      const outcome = await fixture.patch(["Synthetic issue"], {
+        onCodex: async () => {
+          await writeFile(
+            join(fixture.directory, "dist", "test-output.log"),
+            "test ran\n",
+          );
+          if (apply)
+            await writeFile(join(fixture.directory, "app.ts"), "fixed\n");
+          return 0;
+        },
+      });
+
+      expect(outcome.status, outcome.stderr).toBe(apply ? 0 : 2);
+      expect(outcome.result).toMatchObject({
+        applied: apply,
+        filesChanged: apply ? 1 : 0,
+        files: apply ? ["app.ts"] : [],
+      });
+      await expect(readFile(indexPath)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     },
   );
 
