@@ -213,6 +213,10 @@
 - update Ink to 8.0.0 ([#1599](https://github.com/openai/codex-security/pull/1599))
 - clarify persistent state and credential paths ([#1586](https://github.com/openai/codex-security/pull/1586))
 - enforce Deep Scan scope across execution adapters ([#1557](https://github.com/openai/codex-security/pull/1557))
+- clarify API-key model and access-program selection ([#1037](https://github.com/openai/codex-security/pull/1037))
+- retain requested repository paths in output ([#1045](https://github.com/openai/codex-security/pull/1045))
+- keep dashboards responsive and show observed usage ([#1276](https://github.com/openai/codex-security/pull/1276))
+- share scan result validation across scan modes ([#920](https://github.com/openai/codex-security/pull/920))
 
 <!-- release-section: highlights:end -->
 
