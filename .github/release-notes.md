@@ -208,6 +208,7 @@
 - bump taiki-e/install-action from 2.87.22 to 2.87.23 ([#1562](https://github.com/openai/codex-security/pull/1562))
 - improve policy onboarding for global installs ([#1416](https://github.com/openai/codex-security/pull/1416))
 - restore GPT-6 Sol cost estimates and budgets ([#1585](https://github.com/openai/codex-security/pull/1585))
+- bump taiki-e/install-action from 2.87.23 to 2.87.24 ([#1597](https://github.com/openai/codex-security/pull/1597))
 
 <!-- release-section: highlights:end -->
 
