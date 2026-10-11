@@ -1,4 +1,5 @@
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -289,6 +290,50 @@ lines.on("line", (line) => {
     },
   );
 
+  test
+    .skipIf(process.platform === "win32" || process.getuid?.() === 0)
+    .each([false, true])(
+    "patches readable source with unreadable SVN metadata, tracked: %j",
+    async (tracked) => {
+      await using fixture = await repositoryFixture({ initialCommit: false });
+      const metadata = [".svn", "nested/.svn"].map((directory) =>
+        join(fixture.directory, directory, "wc.db"),
+      );
+      for (const directory of [".svn", "nested/.svn"])
+        await mkdir(join(fixture.directory, directory), { recursive: true });
+      for (const file of metadata) await writeFile(file, "metadata\n");
+      if (tracked) await fixture.git("add", ".");
+      const indexPath = join(fixture.directory, ".git", "index");
+      const index = await readFile(indexPath);
+      for (const file of metadata) await chmod(file, 0);
+      try {
+        for (const file of metadata)
+          await expect(readFile(file)).rejects.toMatchObject({
+            code: "EACCES",
+          });
+        const outcome = await fixture.patch(["Synthetic issue"], {
+          onCodex: async () => {
+            await writeFile(join(fixture.directory, "app.ts"), "fixed\n");
+            return 0;
+          },
+        });
+
+        expect(outcome.status, outcome.stderr).toBe(0);
+        expect(outcome.result).toMatchObject({
+          applied: true,
+          filesChanged: 1,
+          files: ["app.ts"],
+        });
+        expect(await readFile(indexPath)).toEqual(index);
+        expect(await readFile(join(fixture.directory, "app.ts"), "utf8")).toBe(
+          "fixed\n",
+        );
+      } finally {
+        for (const file of metadata) await chmod(file, 0o600);
+      }
+    },
+  );
+
   test.each([
     [false, undefined],
     [true, undefined],
@@ -399,11 +444,15 @@ lines.on("line", (line) => {
     ["skip-worktree", "edit"],
     ["skip-worktree", "delete"],
     ["skip-worktree", "none"],
+    ["core.ignorestat", "edit"],
+    ["core.ignorestat", "delete"],
+    ["core.ignorestat", "none"],
   ] as const)(
     "checks unborn Git patches despite %s with change: %s",
     async (flag, change) => {
       await using fixture = await repositoryFixture({ initialCommit: false });
-      await fixture.git("update-index", `--${flag}`, "app.ts");
+      if (flag === "core.ignorestat") await fixture.git("config", flag, "true");
+      else await fixture.git("update-index", `--${flag}`, "app.ts");
       const indexPath = join(fixture.directory, ".git", "index");
       const index = await readFile(indexPath);
 

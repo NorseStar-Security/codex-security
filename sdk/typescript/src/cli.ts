@@ -7240,7 +7240,14 @@ async function snapshotPatchTree(
     }
     if (hasHead) {
       await run(["read-tree", "HEAD"]);
+      await run(["--literal-pathspecs", "add", "--all"]);
     } else {
+      const sourcePathspecs = [
+        "--",
+        ":/",
+        ":(top,glob,exclude)**/.svn",
+        ":(top,glob,exclude)**/.svn/**",
+      ];
       // Preserve tracked paths, including ignored and intent-to-add files, without
       // copying cached stat data or flags that can hide working-tree changes.
       // Git's quoted format preserves raw filename bytes through string transport.
@@ -7252,8 +7259,7 @@ async function snapshotPatchTree(
           "ls-files",
           "--stage",
           "--full-name",
-          "--",
-          ":/",
+          ...sourcePathspecs,
         ],
         repository,
         { trim: false, environment: { GIT_LITERAL_PATHSPECS: "0" } },
@@ -7261,25 +7267,13 @@ async function snapshotPatchTree(
       await run(["read-tree", "--empty"]);
       await dependencies.runRepositoryCommand(
         "git",
-        ["update-index", "--index-info"],
+        ["-c", "core.ignorestat=false", "update-index", "--index-info"],
         repository,
         { environment, input: entries },
       );
-    }
-    await run(["--literal-pathspecs", "add", "--all"]);
-    if (!hasHead) {
-      // SVN administrative writes must not count as patches in a new Git repo.
       await dependencies.runRepositoryCommand(
         "git",
-        [
-          "rm",
-          "--cached",
-          "--ignore-unmatch",
-          "-r",
-          "--",
-          ":(top,glob)**/.svn",
-          ":(top,glob)**/.svn/**",
-        ],
+        ["add", "--all", ...sourcePathspecs],
         repository,
         { environment: { ...environment, GIT_LITERAL_PATHSPECS: "0" } },
       );
