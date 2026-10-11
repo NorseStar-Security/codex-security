@@ -2220,8 +2220,47 @@ describe("CLI", () => {
     expect(text).not.toContain("Estimated cost: $0.0248865 of $2.00 limit");
   });
 
+  test("shows known dashboard tokens when the model has no price entry", async () => {
+    const { stderr, runCli } = createCliTest(main, { stderr: true });
+    const deps = dependencies({ environment: { NO_COLOR: "1" } });
+    const createSecurity = deps.createSecurity;
+    deps.createSecurity = (config) => {
+      const client = createSecurity(config);
+      const run = client.run.bind(client);
+      client.run = async (repository, options) => {
+        options?.onUsage?.({
+          input_tokens: 100,
+          cached_input_tokens: 0,
+          cache_write_input_tokens: 0,
+          output_tokens: 10,
+          reasoning_output_tokens: 0,
+          total_tokens: 110,
+        });
+        return run(repository, options);
+      };
+      return client;
+    };
+    expect(
+      await runCli(
+        [
+          "scan",
+          "/synthetic/repository",
+          "--model",
+          "synthetic-unpriced-model",
+          "--show-cost",
+        ],
+        deps,
+      ),
+    ).toBe(0);
+    const text = stripVTControlCharacters(stderr.text()).replace(/\s+/gu, " ");
+    expect(text).toContain(
+      "100 uncached input, 0 cache reads, 0 cache writes, 10 output, 110 total",
+    );
+    expect(text).toContain("unavailable (model pricing or usage missing)");
+  });
+
   test.each([false, true])(
-    "shows durable Deep progress without changing stdout or TUI layout (interactive=%j)",
+    "shows durable Deep progress without changing stdout or TUI layout (interactive=%p)",
     async (interactive) => {
       const { stdout, stderr, runCli } = createCliTest(main, {
         stderr: interactive,
@@ -4363,40 +4402,26 @@ describe("CLI", () => {
     expect(stderr.text()).not.toContain("warning:");
   });
 
-  test("prints trusted cyber access guidance without failing or corrupting JSON scans", async () => {
-    const { stdout, stderr, runCli } = createCliTest(main);
-
-    const deps = scanDependencies(
-      warningResult(
-        "Some cybersecurity requests or findings may be refused because your account does not have Trusted Access for Cyber. Apply at https://chatgpt.com/cyber.",
-      ),
-    );
-
-    expect(await runCli(["scan", ".", "--json"], deps)).toBe(0);
-    expect(JSON.parse(stdout.text())).toEqual(fakeResult().toJSON());
-    expect(stderr.text()).toContain(
+  test.each([
+    [
+      "prints trusted cyber access guidance without failing or corrupting JSON scans",
+      "Some cybersecurity requests or findings may be refused because your account does not have Trusted Access for Cyber. Apply at https://chatgpt.com/cyber.",
       "codex-security: warning: Some cybersecurity requests or findings may be refused because your account does not have Trusted Access for Cyber.",
-    );
-    expect(stderr.text()).toContain("Apply at https://chatgpt.com/cyber.");
-  });
-
-  test("prints unverified trusted cyber access guidance without corrupting JSON scans", async () => {
+      "Apply at https://chatgpt.com/cyber.",
+    ],
+    [
+      "prints unverified trusted cyber access guidance without corrupting JSON scans",
+      "Some cybersecurity requests or findings may be refused because your Trusted Access for Cyber status could not be verified. Check your access or apply at https://chatgpt.com/cyber.",
+      "codex-security: warning: Some cybersecurity requests or findings may be refused because your Trusted Access for Cyber status could not be verified.",
+      "Check your access or apply at https://chatgpt.com/cyber.",
+    ],
+  ] as const)("%s", async (_name, warning, message, guidance) => {
     const { stdout, stderr, runCli } = createCliTest(main);
-
-    const deps = scanDependencies(
-      warningResult(
-        "Some cybersecurity requests or findings may be refused because your Trusted Access for Cyber status could not be verified. Check your access or apply at https://chatgpt.com/cyber.",
-      ),
-    );
-
+    const deps = scanDependencies(warningResult(warning));
     expect(await runCli(["scan", ".", "--json"], deps)).toBe(0);
     expect(JSON.parse(stdout.text())).toEqual(fakeResult().toJSON());
-    expect(stderr.text()).toContain(
-      "codex-security: warning: Some cybersecurity requests or findings may be refused because your Trusted Access for Cyber status could not be verified.",
-    );
-    expect(stderr.text()).toContain(
-      "Check your access or apply at https://chatgpt.com/cyber.",
-    );
+    expect(stderr.text()).toContain(message);
+    expect(stderr.text()).toContain(guidance);
   });
 
   test("prints organizational trusted cyber access guidance without corrupting JSON scans", async () => {

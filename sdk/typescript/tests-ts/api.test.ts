@@ -89,6 +89,7 @@ import { runTestInSubprocess } from "./support/test-subprocess.js";
 import { writeSession as writeUsageSession } from "./support/usage-rollout.js";
 import { importScan } from "../src/import-scan.js";
 import { FindingWorkflow } from "../src/finding-workflow.js";
+import { restoreScanKnowledge, scanInputIdentity } from "../src/scan-inputs.js";
 import { DEFAULT_DEEP_SCAN_SETTINGS } from "../src/deep-scan-defaults.js";
 import { VERSION } from "../src/version.js";
 import { createProviderProfile } from "../src/provider-profile.js";
@@ -1084,8 +1085,10 @@ describe("CodexSecurity orchestration", () => {
     ).resolves.toMatchObject({ model: "gpt-5.6-sol", maxCostUsd: 5 });
     for (const model of [
       "gpt-6-astra",
+      "gpt-6-sol",
       "gpt-6.1-sol",
       "gpt-6-luna",
+      "openai.gpt-6-sol",
       "openai.gpt-6.1-sol",
       "openai.gpt-6-luna",
     ]) {
@@ -2115,6 +2118,42 @@ describe("CodexSecurity orchestration", () => {
     expect(onOutputDirReady).toHaveBeenCalled();
     expect(onScanRegistered).not.toHaveBeenCalled();
     await client.close();
+  });
+
+  test("retains the registered scan ID when continuation storage becomes unavailable", async () => {
+    const { root, repository, codexHome, scanDir } = await scanDirectories();
+    const document = join(root, "architecture.md");
+    await writeFile(document, "Synthetic original architecture.");
+    const onScanRegistered = mock();
+    const createCodex = mock(() =>
+      fail("No worker can start without its saved context"),
+    );
+    const failedScans: Array<readonly string[]> = [];
+    await using client = TestClient.withDependencies({
+      ...scanRuntimeDependencies(codexHome, scanDir),
+      runWorkbench: async (_options, args, input) => {
+        const result = mockWorkbench(args, input);
+        if (args[0] === "register-cli-scan") {
+          // Simulate storage disappearing after the database accepts registration.
+          await rm(scanDir, { recursive: true });
+        }
+        if (args[0] === "fail-scan") failedScans.push(args);
+        return result;
+      },
+      createCodex,
+    });
+    await expect(
+      client.run(repository, {
+        knowledgeBasePaths: [document],
+        onScanRegistered,
+      }),
+    ).rejects.toThrow("ENOENT");
+    expect(onScanRegistered.mock.calls).toEqual([
+      [{ scanId: "scan_example_001", scanDir }],
+    ]);
+    expect(failedScans).toHaveLength(1);
+    expect(failedScans[0]).toContain("scan_example_001");
+    expect(createCodex).not.toHaveBeenCalled();
   });
 
   test("identifies stored credential types without exposing stored secrets", async () => {
@@ -3731,7 +3770,7 @@ describe("CodexSecurity orchestration", () => {
         join(sessions, "a-synthetic.jsonl"),
         join(sessions, "b-synthetic.jsonl"),
       ];
-      await Promise.all(logs.map((path) => writeFile(path, "")));
+      await Promise.all(logs.map((path) => writeFile(path, "{}\n")));
       const denied = new Set([logs[0]!]);
       const attempts = new Map<string, number>();
       let firstRepeated!: () => void;
@@ -3772,6 +3811,7 @@ describe("CodexSecurity orchestration", () => {
                 await first;
                 denied.delete(logs[0]!);
                 denied.add(logs[1]!);
+                await appendFile(logs[1]!, "{}\n");
                 await second;
                 denied.delete(logs[1]!);
                 for await (const event of completedEvents()) {
@@ -4740,6 +4780,36 @@ describe("CodexSecurity orchestration", () => {
     "gpt-daybreak-blue-latest",
     "gpt-daybreak-red-latest",
   ];
+  test("reports unpriced model usage without letting its observer stop the scan", async () => {
+    const { root, repository, codexHome, scanDir } = await scanDirectories();
+    const usages: unknown[] = [];
+    const observerErrors: string[] = [];
+    const client = new TestClient(
+      { codexOverrides: { model: "synthetic-unpriced-model" } },
+      {
+        ...scanRuntimeDependencies(codexHome, scanDir),
+        runWorkbench: recordingWorkbench([]),
+        createCodex: completedCodex(root),
+      },
+    );
+    try {
+      const result = await client.run(repository, {
+        onUsage: async (usage) => {
+          usages.push(usage);
+          await Promise.resolve();
+          throw new Error("synthetic usage observer");
+        },
+        onObserverError: (observer) => observerErrors.push(observer),
+      });
+      expect(result.cost).toBeNull();
+      expect(usages).toEqual([
+        expect.objectContaining({ input_tokens: 10, output_tokens: 3 }),
+      ]);
+      expect(observerErrors).toEqual(["onUsage"]);
+    } finally {
+      await client.close();
+    }
+  });
   test.each(pricedModels)("tracks live and saved %s costs", async (model) => {
     const { root, repository, codexHome, scanDir } = await scanDirectories();
 
@@ -5475,7 +5545,7 @@ describe("CodexSecurity orchestration", () => {
   });
 
   test.each(["repository", "standalone-file"])(
-    "protects %s knowledge-base context without retaining its documents",
+    "protects %s knowledge-base context and retains private continuation inputs",
     async (kind) => {
       const scanPrompt = "Review the synthetic authorization boundary.";
       const root = await temporaryDirectory();
@@ -5570,12 +5640,11 @@ describe("CodexSecurity orchestration", () => {
         }),
       });
 
-      await expect(
-        client.run(repository, {
-          knowledgeBasePaths: [knowledgeBase],
-          scanPrompt,
-        }),
-      ).resolves.toMatchObject({ threadId: "thread-1" });
+      const result = await client.run(repository, {
+        knowledgeBasePaths: [knowledgeBase],
+        scanPrompt,
+      });
+      expect(result).toMatchObject({ threadId: "thread-1" });
       expect(existsSync(knowledgeDirectory)).toBe(false);
       expect(workbenchGit).toBe(expectedGit);
       expect(prompt).toContain(
@@ -5587,6 +5656,16 @@ describe("CodexSecurity orchestration", () => {
       expect(prompt).not.toContain("deep-discovery userContext");
       expect(prompt).not.toContain(context.trim());
       expect(recipe).toMatchObject({ knowledgeBasePaths: [knowledgeBase] });
+      await rm(document);
+      const saved = await restoreScanKnowledge(
+        scanDir,
+        repository,
+        (recipe as JsonObject)["scanInputs"],
+      );
+      expect(Object.values(saved.documents)).toContain(context);
+      expect((recipe as JsonObject)["scanInputs"]).toEqual(
+        scanInputIdentity(scanPrompt, saved),
+      );
       expect(await readdir(scanDir)).not.toContain("knowledge-base");
       await client.close();
     },

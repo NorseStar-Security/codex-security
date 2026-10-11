@@ -3,6 +3,95 @@ import { describe, expect, test } from "bun:test";
 import { renderScanHistory } from "../src/scan-history-renderer.js";
 
 describe("scan history renderer", () => {
+  test("counts singleton sides when the other side is grouped", () => {
+    const text = renderScanHistory(
+      {
+        repository: "/synthetic/repository",
+        beforeScanId: "before-scan",
+        afterScanId: "after-scan",
+        coverage: { afterCompleteness: "complete" },
+        summary: { persisting: 2 },
+        findings: [
+          {
+            title: "Merged group",
+            severity: "high",
+            status: "persisting",
+            path: "merged.ts",
+            beforeOccurrenceIds: ["before-one", "before-two"],
+            afterOccurrenceId: "after-one",
+          },
+          {
+            title: "Expanded group",
+            severity: "high",
+            status: "persisting",
+            path: "expanded.ts",
+            beforeOccurrenceId: "before-one",
+            afterOccurrenceIds: ["after-one", "after-two"],
+          },
+        ],
+      },
+      "compare",
+      { color: false },
+    );
+    expect(text).toContain("2 → 1");
+    expect(text).toContain("1 → 2");
+  });
+
+  test("shows zero findings on the absent side of grouped comparisons", () => {
+    const text = renderScanHistory(
+      {
+        repository: "/synthetic/repository",
+        beforeScanId: "before-scan",
+        afterScanId: "after-scan",
+        coverage: { afterCompleteness: "complete" },
+        summary: { resolved: 2, new: 2 },
+        findings: [
+          {
+            title: "Resolved group",
+            severity: "high",
+            status: "resolved",
+            path: "before.ts",
+            beforeOccurrenceIds: ["before-one", "before-two"],
+          },
+          {
+            title: "Added group",
+            severity: "medium",
+            status: "new",
+            path: "after.ts",
+            afterOccurrenceIds: ["after-one", "after-two"],
+          },
+        ],
+      },
+      "compare",
+      { color: false },
+    );
+    expect(text).toContain("2 → 0");
+    expect(text).toContain("0 → 2");
+  });
+
+  test("orders severity totals from critical to informational", () => {
+    const text = renderScanHistory(
+      {
+        scanId: "synthetic-scan",
+        targetPath: "/synthetic/repository",
+        progress: { status: "complete" },
+        findings: [],
+        severityCounts: {
+          low: 4,
+          informational: 5,
+          medium: 3,
+          critical: 1,
+          high: 2,
+        },
+      },
+      "show",
+      { color: false },
+    );
+    expect(text).toMatch(
+      /1 CRITICAL.*2 HIGH.*3 MEDIUM.*4 LOW.*5 INFORMATIONAL/,
+    );
+  });
+
   test.each([
     [
       "spaced Chinese",
@@ -274,6 +363,17 @@ describe("scan history renderer", () => {
       findingsTruncated: true,
       artifacts: { markdownReport: "/demo/results/report.md" },
       recipe: {
+        target: { kind: "paths", paths: ["src"] },
+        deepScan: { workers: 2, subagents: 0 },
+        scanInputs: {
+          scanPromptSha256: "a".repeat(64),
+          knowledgeBase: {
+            sha256: "b".repeat(64),
+            documents: [
+              { name: "0-architecture.md.txt", sha256: "c".repeat(64) },
+            ],
+          },
+        },
         config: {
           model: "gpt-5.6-sol",
           model_reasoning_effort: "high",
@@ -293,6 +393,14 @@ describe("scan history renderer", () => {
       "FINDINGS  20 of 75",
       "PARENT SCAN  87654321",
       "CONFIGURATION",
+      "SCOPE",
+      '"paths":["src"]',
+      "DEEP SCAN",
+      '"workers":2',
+      `SCAN INSTRUCTIONS  sha256:${"a".repeat(64)}`,
+      `KNOWLEDGE SNAPSHOT  sha256:${"b".repeat(64)}`,
+      "0-architecture.md.txt",
+      `sha256:${"c".repeat(64)}`,
       "model=gpt-5.6-sol",
       'features={"goals":true,"multi_agent_v2":{"enabled":true}}',
       'trusted_paths=["src","packages/core"]',

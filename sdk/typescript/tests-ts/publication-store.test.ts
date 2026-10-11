@@ -43,12 +43,7 @@ const { temporaryDirectory, cleanup } = createApiTestFixtures(
 
 afterEach(cleanup);
 
-interface PublicationFixture {
-  environment: NodeJS.ProcessEnv;
-  publication: PreparedScanPublication;
-  python: string;
-  stateDirectory: string;
-}
+type PublicationFixture = Awaited<ReturnType<typeof publicationFixture>>;
 
 async function publicationFixture(
   options: {
@@ -57,7 +52,7 @@ async function publicationFixture(
     seedScan?: boolean;
     stateDirectoryName?: string;
   } = {},
-): Promise<PublicationFixture> {
+) {
   const root = await temporaryDirectory();
   const scanDirectory = join(root, "completed-scan");
   await mkdir(scanDirectory, { mode: 0o700 });
@@ -68,7 +63,7 @@ async function publicationFixture(
       "Publication workbench tests require a Python interpreter.",
     );
   }
-  const environment = {
+  const environment: NodeJS.ProcessEnv = {
     ...process.env,
     CODEX_SECURITY_STATE_DIR: stateDirectory,
     PYTHON: python,
