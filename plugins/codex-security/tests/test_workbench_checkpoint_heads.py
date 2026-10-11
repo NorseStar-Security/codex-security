@@ -25,6 +25,7 @@ from workbench_test_support import (
     saved_draft,
     scan_command,
     start_delivered_scan,
+    worker_coverage_id,
     write_checkpoint,
     write_completed_contract,
 )

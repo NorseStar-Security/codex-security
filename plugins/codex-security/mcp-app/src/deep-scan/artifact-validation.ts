@@ -91,16 +91,15 @@ export function aggregateDiscoveryCoverage(
       }
     }
     if (Array.isArray(source.openQuestions)) {
-      const questions = source.openQuestions.map((question) => ({
-        ...(typeof question === "string"
-          ? { question }
-          : (question as JsonObject)),
-        workerId: worker.id,
-      }));
-      coverage.openQuestions = [
-        ...((coverage.openQuestions as JsonObject[] | undefined) ?? []),
-        ...questions,
-      ];
+      const questions = (coverage.openQuestions ??= []) as JsonObject[];
+      for (const question of source.openQuestions) {
+        questions.push({
+          ...(typeof question === "string"
+            ? { question }
+            : (question as JsonObject)),
+          workerId: worker.id,
+        });
+      }
     }
   }
   return coverage;

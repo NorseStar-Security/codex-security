@@ -12,7 +12,7 @@ import re
 import sqlite3
 import stat
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -758,6 +758,7 @@ def _generic_surface_updates(
     deferred_rows: dict[str, list[Any]],
     ambiguous_deferred: set[tuple[str | None, str]],
     *,
+    surface_is_retained: Callable[[str, str | None, dict[str, Any]], bool],
     receipt_root: Path | None = None,
     receipt_warnings: list[str] | None = None,
 ) -> tuple[set[int], list[tuple[str | None, dict[str, Any]]]]:
@@ -793,8 +794,13 @@ def _generic_surface_updates(
     # Current selections across all surfaces take precedence over historical refs.
     receipt_paths: dict[str, str] = {}
     if receipt_root is not None:
-        for matches in saved_surfaces.values():
-            latest_surface = max(matches, key=lambda match: source_order[match[0]])[1]
+        for (owner, _), matches in saved_surfaces.items():
+            retained = [
+                match for match in matches if surface_is_retained(match[0], owner, match[1])
+            ]
+            if not retained:
+                continue
+            latest_surface = max(retained, key=lambda match: source_order[match[0]])[1]
             refs = latest_surface.get("receiptRefs", [])
             for ref in refs if isinstance(refs, list) else []:
                 if receipt_error(ref) is None:
@@ -1781,6 +1787,117 @@ def merge_saved_results(
                             represented_candidate_history.setdefault(candidate_key, set()).add(
                                 _digest(_finding_content(original["finding"]))
                             )
+    selected_terminal_orders: dict[str, tuple[int, int]] = {}
+    for relative, draft, worker_id in sources:
+        if (
+            worker_id is not None
+            and relative in selected_observations
+            and draft.get("complete") is not False
+        ):
+            order = source_order[relative]
+            selected_terminal_orders[worker_id] = max(
+                selected_terminal_orders.get(worker_id, order), order
+            )
+    terminal_worker_orders: dict[str | None, tuple[int, int]] = {}
+    for relative, draft, worker_id in sources:
+        if relative in current_results and draft.get("complete") is not False:
+            order = source_order[relative]
+            terminal_worker_orders[worker_id] = max(
+                terminal_worker_orders.get(worker_id, order), order
+            )
+
+    def source_coverage_selection(
+        relative: str,
+        worker_id: str | None,
+    ) -> tuple[bool, set[str], bool, bool]:
+        worker_result_order = terminal_worker_orders.get(worker_id)
+        selected_coverage_superseded = worker_id in selected_terminal_orders and (
+            source_order[relative] < selected_terminal_orders[worker_id]
+            or (
+                relative in current_results
+                and source_order[relative] <= selected_terminal_orders[worker_id]
+            )
+        )
+        selected_candidates = {
+            candidate_id
+            for (owner, candidate_id), (_, source) in ordered_outcomes.items()
+            if owner == worker_id and source == relative
+        }
+        superseded = (
+            worker_id is None
+            and parent is not None
+            and parent.get("complete") is not False
+            and relative != "parent"
+            and source_order[relative] <= (0, parent_modified)
+            and (not stopped_parent_seal or relative in parent_preserved_sources)
+        ) or (
+            relative not in current_results
+            and worker_result_order is not None
+            and (
+                relative not in selected_observations
+                or source_order[relative] < worker_result_order
+            )
+        )
+        # A failed result write can leave pending work outside the accepted result.
+        accepted_order = (
+            (0, parent_modified)
+            if worker_id is None and parent is not None
+            else worker_result_order
+        )
+        retain_pending = (
+            superseded
+            and (worker_id in headed_workers or (worker_id is None and parent_heads))
+            and accepted_order is not None
+            and source_order[relative] >= accepted_order
+            and any(isinstance(row, dict) for row in deferred_rows[relative])
+        )
+        return selected_coverage_superseded, selected_candidates, superseded, retain_pending
+
+    def coverage_row_is_retained(
+        field: str,
+        item: Any,
+        worker_id: str | None,
+        selection: tuple[bool, set[str], bool, bool],
+    ) -> bool:
+        selected_coverage_superseded, selected_candidates, superseded, retain_pending = selection
+        # A selected terminal checkpoint replaces ordinary coverage, while
+        # candidate evidence and pending tasks retain their own reconciliation.
+        if (
+            selected_coverage_superseded
+            and field != "deferred"
+            and not (
+                isinstance(item, dict)
+                and any(key in item for key in ("candidateId", "candidate", "finding"))
+            )
+        ):
+            return False
+        # A selected outcome must retain its evidence even if its result write failed.
+        if superseded and not (
+            isinstance(item, dict)
+            and (
+                (field == "deferred" and retain_pending)
+                or (
+                    isinstance(item.get("candidateId"), str)
+                    and item["candidateId"] in selected_candidates
+                    and item.get("disposition") == resolved.get((worker_id, item["candidateId"]))
+                )
+            )
+        ):
+            return False
+        if (
+            isinstance(item, dict)
+            and isinstance(
+                identity := _deferred_candidate_id(item, worker_id, ambiguous_deferred)
+                if field == "deferred"
+                else item.get("candidateId"),
+                str,
+            )
+            and (worker_id, identity) in resolved
+            and (field == "deferred" or item.get("disposition") == "needs_follow_up")
+        ):
+            return False
+        return True
+
     replaced_surfaces, surface_updates = _generic_surface_updates(
         all_sources,
         source_order,
@@ -1793,6 +1910,9 @@ def merge_saved_results(
         ambiguous_deferred,
         receipt_root=scan_dir if project_worker_coverage else None,
         receipt_warnings=warnings,
+        surface_is_retained=lambda relative, owner, row: coverage_row_is_retained(
+            "surfaces", row, owner, source_coverage_selection(relative, owner)
+        ),
     )
     replaced_rows = {
         "surfaces": replaced_surfaces,
@@ -1872,66 +1992,9 @@ def merge_saved_results(
                 )
                 if retained_surface not in coverage["surfaces"]:
                     coverage["surfaces"].append(copy.deepcopy(retained_surface))
-    selected_terminal_orders: dict[str, tuple[int, int]] = {}
-    for relative, draft, worker_id in sources:
-        if (
-            worker_id is not None
-            and relative in selected_observations
-            and draft.get("complete") is not False
-        ):
-            order = source_order[relative]
-            selected_terminal_orders[worker_id] = max(
-                selected_terminal_orders.get(worker_id, order), order
-            )
-    terminal_worker_orders: dict[str | None, tuple[int, int]] = {}
-    for relative, draft, worker_id in sources:
-        if relative in current_results and draft.get("complete") is not False:
-            order = source_order[relative]
-            terminal_worker_orders[worker_id] = max(
-                terminal_worker_orders.get(worker_id, order), order
-            )
     for relative, draft, worker_id in all_sources:
-        worker_result_order = terminal_worker_orders.get(worker_id)
-        selected_coverage_superseded = worker_id in selected_terminal_orders and (
-            source_order[relative] < selected_terminal_orders[worker_id]
-            or (
-                relative in current_results
-                and source_order[relative] <= selected_terminal_orders[worker_id]
-            )
-        )
-        selected_candidates = {
-            candidate_id
-            for (owner, candidate_id), (_, source) in ordered_outcomes.items()
-            if owner == worker_id and source == relative
-        }
-        superseded = (
-            worker_id is None
-            and parent is not None
-            and parent.get("complete") is not False
-            and relative != "parent"
-            and source_order[relative] <= (0, parent_modified)
-            and (not stopped_parent_seal or relative in parent_preserved_sources)
-        ) or (
-            relative not in current_results
-            and worker_result_order is not None
-            and (
-                relative not in selected_observations
-                or source_order[relative] < worker_result_order
-            )
-        )
-        # A failed result write can leave pending work outside the accepted result.
-        accepted_order = (
-            (0, parent_modified)
-            if worker_id is None and parent is not None
-            else worker_result_order
-        )
-        retain_pending = (
-            superseded
-            and (worker_id in headed_workers or (worker_id is None and parent_heads))
-            and accepted_order is not None
-            and source_order[relative] >= accepted_order
-            and any(isinstance(row, dict) for row in deferred_rows[relative])
-        )
+        selection = source_coverage_selection(relative, worker_id)
+        selected_coverage_superseded, selected_candidates, superseded, retain_pending = selection
         if (
             (relative != "parent" or not parent_is_canonical)
             and not superseded
@@ -2139,30 +2202,7 @@ def merge_saved_results(
                 # recovery and warnings rather than silently changing its contract.
                 continue
             for item in items:
-                # A selected terminal checkpoint replaces ordinary coverage, while
-                # candidate evidence and pending tasks retain their own reconciliation.
-                if (
-                    selected_coverage_superseded
-                    and field != "deferred"
-                    and not (
-                        isinstance(item, dict)
-                        and any(key in item for key in ("candidateId", "candidate", "finding"))
-                    )
-                ):
-                    continue
-                # A selected outcome must retain its evidence even if its result write failed.
-                if superseded and not (
-                    isinstance(item, dict)
-                    and (
-                        (field == "deferred" and retain_pending)
-                        or (
-                            isinstance(item.get("candidateId"), str)
-                            and item["candidateId"] in selected_candidates
-                            and item.get("disposition")
-                            == resolved.get((worker_id, item["candidateId"]))
-                        )
-                    )
-                ):
+                if not coverage_row_is_retained(field, item, worker_id, selection):
                     continue
                 if id(item) in replaced_rows.get(field, ()):
                     continue
@@ -2194,18 +2234,6 @@ def merge_saved_results(
                             for previous in history
                         ):
                             history.append(copy.deepcopy(finding))
-                if (
-                    isinstance(item, dict)
-                    and isinstance(
-                        identity := _deferred_candidate_id(item, worker_id, ambiguous_deferred)
-                        if field == "deferred"
-                        else item.get("candidateId"),
-                        str,
-                    )
-                    and (worker_id, identity) in resolved
-                    and (field == "deferred" or item.get("disposition") == "needs_follow_up")
-                ):
-                    continue
                 if field == "surfaces" and isinstance(item, dict):
                     item = {**item, "receiptRefs": item.get("receiptRefs", [])}
                 if isinstance(item, dict) and "id" not in item:

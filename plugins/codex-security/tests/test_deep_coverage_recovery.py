@@ -383,6 +383,7 @@ def test_current_receipt_spelling_precedes_historical_receipts(
         schema,
         {"old": [task], "current": []},
         set(),
+        surface_is_retained=lambda _relative, _owner, _row: True,
         receipt_root=tmp_path,
         receipt_warnings=warnings,
     )
@@ -560,3 +561,88 @@ def test_missing_historical_receipt_does_not_hide_valid_case_variant(tmp_path, r
         ],
     }
     finalizer._validate_existing_seal(tmp_path, scan)
+
+
+@pytest.mark.parametrize("projected_parent", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_superseded_surface_cannot_reserve_historical_receipt(tmp_path, projected_parent, reverse):
+    reader = {
+        "id": "reader",
+        "label": "Reader",
+        "disposition": "needs_follow_up",
+        "receiptRefs": ["artifacts/review.md"],
+    }
+    writer = {
+        "id": "writer",
+        "label": "Writer",
+        "disposition": "no_issue_found",
+        "receiptRefs": ["artifacts/Review.md"],
+    }
+    task = {"id": "review-reader", "reason": "Review reader.", "surfaceIds": ["reader"]}
+    surfaces = [writer, reader] if reverse else [reader, writer]
+    old = saved_draft("coverage-scan", complete=True, surfaces=surfaces, deferred=[task])
+    source = worker(tmp_path, "first", old)
+    output = Path(source["artifact_dir"])
+    if (output / "artifacts/Review.md").exists():
+        pytest.skip("This regression requires case-sensitive receipt paths.")
+    (output / "artifacts/Review.md").write_text("Superseded writer evidence.\n")
+    archive = output.parent / "attempts/attempt-01"
+    archive.parent.mkdir()
+    output.rename(archive)
+    (output / "artifacts").mkdir(parents=True)
+    (output / "artifacts/replacement.md").write_text("Completed reader evidence.\n")
+    current = saved_draft(
+        "coverage-scan",
+        complete=True,
+        surfaces=[
+            {**reader, "disposition": "no_issue_found", "receiptRefs": ["artifacts/replacement.md"]}
+        ],
+        closures=[{"id": "review-reader", "reason": "Reader review complete."}],
+    )
+    (output / "result.json").write_text(json.dumps(current))
+    os.utime(output / "result.json", ns=(300, 300))
+    prefix = archive.relative_to(tmp_path).as_posix() + "/"
+    if projected_parent:
+        parent = copy.deepcopy(old)
+        parent["coverage"]["surfaces"] = [
+            {
+                **row,
+                "id": "first/" + row["id"],
+                "workerId": "first",
+                "receiptRefs": [prefix + ref for ref in row["receiptRefs"]],
+            }
+            for row in surfaces
+        ]
+        parent["coverage"]["deferred"] = [
+            {
+                **task,
+                "id": "first/review-reader",
+                "workerId": "first",
+                "surfaceIds": ["first/reader"],
+            }
+        ]
+        write_saved_parent(tmp_path, parent, 200)
+    originals = {path: path.read_bytes() for path in tmp_path.rglob("*") if path.is_file()}
+    warnings = []
+    documents = saved.merge_saved_results(
+        tmp_path,
+        "coverage-scan",
+        saved_binding("deep_repository", repository="synthetic"),
+        [source],
+        warnings,
+        stopped=True,
+        reason="Source review stopped.",
+        project_worker_coverage=not projected_parent,
+    )
+    assert documents is not None
+    retained = documents[2]["surfaces"]
+    assert [row["id"] for row in retained] == ["first/reader"]
+    assert set(retained[0]["receiptRefs"]) == {
+        prefix + "artifacts/review.md",
+        output.relative_to(tmp_path).as_posix() + "/artifacts/replacement.md",
+    }
+    assert prefix + "artifacts/review.md" in finalizer._supplementary_artifact_refs(
+        documents[0]["scan"], documents[2]
+    )
+    assert not warnings
+    assert all(path.read_bytes() == contents for path, contents in originals.items())

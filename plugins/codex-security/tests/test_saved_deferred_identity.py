@@ -16,6 +16,7 @@ from workbench_test_support import (
     preserve_scan_results,
     saved_discovery_worker,
     saved_draft,
+    worker_coverage_id,
     write_checkpoint,
 )
 

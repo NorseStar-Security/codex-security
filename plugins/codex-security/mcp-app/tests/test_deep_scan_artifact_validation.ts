@@ -45,8 +45,12 @@ try {
   for (const reverse of [false, true])
     await testMissingReceiptRepair(root, true, reverse);
   await testSharedMissingReceiptRepairHistory(root);
-  await testCurrentReceiptSelectionBeforeArchivedHistory(root);
-  await testCurrentReceiptSelectionBeforeArchivedHistory(root, true);
+  for (const resolution of [
+    "generic",
+    "candidate",
+    "linked-candidate",
+  ] as const)
+    await testCurrentReceiptSelectionBeforeArchivedHistory(root, resolution);
   await testReducerValidation(root);
   await testEmptyDiscoveryAndReduction(root);
 } finally {
@@ -1389,8 +1393,9 @@ async function testSharedMissingReceiptRepairHistory(root: string) {
 
 async function testCurrentReceiptSelectionBeforeArchivedHistory(
   root: string,
-  candidate = false,
+  resolution: "generic" | "candidate" | "linked-candidate",
 ) {
+  const candidate = resolution !== "generic";
   for (const repairId of ["reader", "writer"]) {
     for (const reverse of [false, true]) {
       const refs = {
@@ -1405,7 +1410,7 @@ async function testCurrentReceiptSelectionBeforeArchivedHistory(
           explicitExclusions: [],
           deferred: [
             {
-              id: candidate ? repairId : "review",
+              id: resolution === "candidate" ? repairId : "review",
               ...(candidate ? { candidateId: repairId } : {}),
               reason: "Review remains.",
               surfaceIds: [repairId],
@@ -1422,7 +1427,7 @@ async function testCurrentReceiptSelectionBeforeArchivedHistory(
       });
       if (reverse) old.coverage.surfaces.reverse();
       const worker = await createWorker(
-        path.join(root, `selected-${repairId}-${reverse}-${candidate}`),
+        path.join(root, `selected-${repairId}-${reverse}-${resolution}`),
         "first",
         old,
       );
@@ -1499,12 +1504,11 @@ async function testCurrentReceiptSelectionBeforeArchivedHistory(
         await readFile(path.join(output, kept.receiptRefs[0]), "utf8"),
         await readFile(path.join(archive, refs[keptId]), "utf8"),
       );
-      if (!candidate) {
-        const repaired = result.coverage.surfaces.find(
-          (row: JsonObject) => row.id === repairId,
-        );
-        assert.deepEqual(repaired.receiptRefs, ["artifacts/replacement.md"]);
-      }
+      const repaired = result.coverage.surfaces.find(
+        (row: JsonObject) => row.id === repairId,
+      );
+      if (candidate) assert.equal(repaired, undefined);
+      else assert.deepEqual(repaired.receiptRefs, ["artifacts/replacement.md"]);
       assert.equal(
         await readFile(path.join(archive, "result.json"), "utf8"),
         oldResult,
