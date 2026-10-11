@@ -219,6 +219,8 @@
 - share scan result validation across scan modes ([#920](https://github.com/openai/codex-security/pull/920))
 - preserve process paths and environment values ([#1429](https://github.com/openai/codex-security/pull/1429))
 - mark source review complete before custom validation ([#1252](https://github.com/openai/codex-security/pull/1252))
+- preserve Git checkout formats and raw POSIX inventory paths ([#1288](https://github.com/openai/codex-security/pull/1288))
+- inspect unpacked files for internal references ([#618](https://github.com/openai/codex-security/pull/618))
 
 <!-- release-section: highlights:end -->
 
