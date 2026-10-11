@@ -215,6 +215,7 @@ const allowedFiles = new Set([
     "deduplication/deduplication",
     "finding-normalization",
     "workbench-arguments",
+    "executable-path",
     "finding-retrieval",
     "finding-workflow",
     "findings-client",

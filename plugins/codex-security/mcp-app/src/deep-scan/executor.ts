@@ -30,7 +30,7 @@ import {
   preflightProviderDefinitions,
   profileConfigOverrides,
 } from "../../../scripts/codex_profile.mjs";
-import { executablePathForSpawn } from "./executable-path.js";
+import { executablePathForSpawn } from "../executable-path.js";
 import {
   classifyCodexWorkerError,
   DeepScanNonRetryableError,
@@ -245,17 +245,7 @@ export class CodexSdkWorkerExecutor implements CodexWorkerExecutor {
     }
   }
 
-  private compactArtifactServer(request: CodexWorkerRequest): Record<
-    string,
-    {
-      command: string;
-      args: string[];
-      env: Record<string, string>;
-      required: true;
-      startup_timeout_sec: number;
-      tool_timeout_sec: number;
-    }
-  > {
+  private compactArtifactServer(request: CodexWorkerRequest) {
     const scan = this.modelSettings.artifactContext;
     if (!scan) return {};
 

@@ -16,8 +16,9 @@ packages and releases. Do not edit or commit files in that directory. See the
 commands.
 
 `pnpm --dir sdk/typescript run generate:models` also copies shared finding
-normalization and workbench argument encoding from the plugin source into the
-SDK. Edit the plugin helper, then regenerate its SDK copy.
+normalization, workbench argument encoding, and executable path handling from
+the plugin source into the SDK. Edit the plugin helper, then regenerate its
+SDK copy.
 `pnpm --dir sdk/typescript run types` checks freshness.
 
 Model-based evaluations live in [`evals/`](evals/README.md), outside the plugin
