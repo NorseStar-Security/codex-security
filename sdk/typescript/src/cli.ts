@@ -7267,6 +7267,23 @@ async function snapshotPatchTree(
       );
     }
     await run(["--literal-pathspecs", "add", "--all"]);
+    if (!hasHead) {
+      // SVN administrative writes must not count as patches in a new Git repo.
+      await dependencies.runRepositoryCommand(
+        "git",
+        [
+          "rm",
+          "--cached",
+          "--ignore-unmatch",
+          "-r",
+          "--",
+          ":(top,glob)**/.svn",
+          ":(top,glob)**/.svn/**",
+        ],
+        repository,
+        { environment: { ...environment, GIT_LITERAL_PATHSPECS: "0" } },
+      );
+    }
     return await run(["write-tree"]);
   } finally {
     await rm(root, { recursive: true, force: true });

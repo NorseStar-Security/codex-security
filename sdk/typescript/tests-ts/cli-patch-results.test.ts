@@ -227,6 +227,69 @@ lines.on("line", (line) => {
   );
 
   test.each([
+    [false, false],
+    [false, true],
+    [true, false],
+    [true, true],
+  ])(
+    "ignores SVN metadata in unborn Git with tracked metadata: %j and source edits: %j",
+    async (tracked, apply) => {
+      await using fixture = await repositoryFixture({ initialCommit: false });
+      const metadata = [".svn", "nested/.svn"];
+      for (const directory of metadata) {
+        await mkdir(join(fixture.directory, directory), { recursive: true });
+        await writeFile(
+          join(fixture.directory, directory, "wc.db"),
+          "original metadata\n",
+        );
+      }
+      const source = join(fixture.directory, "nested", ".svn-backup", "app.ts");
+      await mkdir(join(fixture.directory, "nested", ".svn-backup"));
+      await writeFile(source, "original source\n");
+      if (tracked) await fixture.git("add", ".");
+      const indexPath = join(fixture.directory, ".git", "index");
+      const index = await readFile(indexPath);
+
+      const outcome = await fixture.patch(["Synthetic issue"], {
+        currentDirectory: join(fixture.directory, "nested"),
+        onRepositoryCommand: (command, args, repository, options) =>
+          runRepositoryCommand(command, args, repository, {
+            ...options,
+            environment: {
+              GIT_LITERAL_PATHSPECS: "1",
+              ...options?.environment,
+            },
+          }),
+        onCodex: async () => {
+          for (const directory of metadata)
+            await writeFile(
+              join(fixture.directory, directory, "wc.db"),
+              "updated metadata\n",
+            );
+          if (apply) await writeFile(source, "fixed\n");
+          return 0;
+        },
+      });
+
+      expect(outcome.status, outcome.stderr).toBe(apply ? 0 : 2);
+      expect(outcome.result).toMatchObject({
+        applied: apply,
+        filesChanged: apply ? 1 : 0,
+        files: apply ? ["nested/.svn-backup/app.ts"] : [],
+      });
+      if (!apply)
+        expect(outcome.result.error).toMatchObject({
+          code: "NO_PATCH_APPLIED",
+        });
+      expect(await readFile(indexPath)).toEqual(index);
+      for (const directory of metadata)
+        expect(
+          await readFile(join(fixture.directory, directory, "wc.db"), "utf8"),
+        ).toBe("updated metadata\n");
+    },
+  );
+
+  test.each([
     [false, undefined],
     [true, undefined],
     [true, "assume-unchanged"],
