@@ -15,7 +15,6 @@ from workbench_test_support import (
     saved_binding,
     saved_discovery_worker,
     scan_command,
-    worker_coverage_id,
     write_checkpoint,
 )
 

@@ -16,7 +16,6 @@ from workbench_test_support import (
     preserve_scan_results,
     saved_discovery_worker,
     saved_draft,
-    worker_coverage_id,
     write_checkpoint,
 )
 
@@ -437,7 +436,8 @@ def test_generic_surface_recovery_uses_resolved_candidate_identity(
                 "workerId": rejection_worker_id,
             } in coverage["surfaces"]
         for row in coverage["deferred"]:
-            if row.get("workerId") == worker_id and "surfaceIds" in row:
+            if row["id"] == f"{worker_id}/{candidate['id']}":
+                assert row["workerId"] == worker_id
                 assert row["surfaceIds"] == [api_surfaces[0]["id"]]
     assert recovered["surfaces"] == first_coverage["surfaces"]
     assert recovered["deferred"] == first_coverage["deferred"]
