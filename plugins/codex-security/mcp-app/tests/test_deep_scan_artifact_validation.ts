@@ -42,7 +42,11 @@ try {
   await testLegacyDeferredPublication(root);
   await testMissingReceiptRepair(root);
   await testSharedMissingReceiptRepairHistory(root);
-  await testCurrentReceiptSelectionBeforeArchivedHistory(root);
+  for (const resolveWithFinding of [false, true])
+    await testCurrentReceiptSelectionBeforeArchivedHistory(
+      root,
+      resolveWithFinding,
+    );
   await testReducerValidation(root);
   await testEmptyDiscoveryAndReduction(root);
 } finally {
@@ -1261,7 +1265,10 @@ async function testSharedMissingReceiptRepairHistory(root: string) {
   );
 }
 
-async function testCurrentReceiptSelectionBeforeArchivedHistory(root: string) {
+async function testCurrentReceiptSelectionBeforeArchivedHistory(
+  root: string,
+  resolveWithFinding: boolean,
+) {
   for (const repairId of ["reader", "writer"]) {
     for (const reverse of [false, true]) {
       const refs = {
@@ -1275,29 +1282,44 @@ async function testCurrentReceiptSelectionBeforeArchivedHistory(root: string) {
           completeness: "partial",
           explicitExclusions: [],
           deferred: [
-            { id: "review", reason: "Review remains.", surfaceIds: [repairId] },
+            {
+              id: "review",
+              reason: "Review remains.",
+              surfaceIds: [repairId],
+              ...(resolveWithFinding ? { candidateId: repairId } : {}),
+            },
           ],
           surfaces: Object.entries(refs).map(([id, ref]) => ({
             id,
             label: id,
             disposition: id === repairId ? "needs_follow_up" : "no_issue_found",
             receiptRefs: [ref],
+            ...(resolveWithFinding && id === repairId
+              ? { candidateId: repairId }
+              : {}),
           })),
         },
       });
       if (reverse) old.coverage.surfaces.reverse();
       const worker = await createWorker(
-        path.join(root, `selected-${repairId}-${reverse}`),
+        path.join(
+          root,
+          `selected-${repairId}-${reverse}-${resolveWithFinding}`,
+        ),
         "first",
         old,
       );
       const output = path.dirname(worker.resultPath);
       const archive = path.join(path.dirname(output), "attempts/attempt-01");
+      await mkdir(path.join(output, "artifacts"));
+      for (const [id, ref] of Object.entries(refs))
+        await writeFile(path.join(output, ref), `Original ${id} review.\n`);
+      await assert.rejects(
+        validateDiscoveryArtifacts(worker.artifacts, worker.resultPath, scanId),
+        /duplicate artifact path/,
+      );
       await mkdir(path.dirname(archive));
       await rename(output, archive);
-      await mkdir(path.join(archive, "artifacts"));
-      for (const [id, ref] of Object.entries(refs))
-        await writeFile(path.join(archive, ref), `Original ${id} review.\n`);
       const originals = await Promise.all(
         Object.values(refs).map((ref) =>
           readFile(path.join(archive, ref), "utf8"),
@@ -1314,23 +1336,37 @@ async function testCurrentReceiptSelectionBeforeArchivedHistory(root: string) {
       );
       await recordCodexSecurityWorkerScanDraft(
         { root: output, repoRoot: root, layout: "worker", scanId },
-        draft([], {
-          complete: true,
-          coverage: {
-            completeness: "complete",
-            explicitExclusions: [],
-            deferred: [],
-            surfaces: [
-              {
-                id: repairId,
-                label: repairId,
-                disposition: "no_issue_found",
-                receiptRefs: ["artifacts/replacement.md"],
-              },
-            ],
-            resolvedDeferred: [{ id: "review", reason: "Review completed." }],
+        draft(
+          resolveWithFinding
+            ? [
+                {
+                  ...finding(repairId, "src/a.js"),
+                  provenance: { source: "local_plugin", candidateId: repairId },
+                },
+              ]
+            : [],
+          {
+            complete: true,
+            coverage: {
+              completeness: "complete",
+              explicitExclusions: [],
+              deferred: [],
+              surfaces: resolveWithFinding
+                ? []
+                : [
+                    {
+                      id: repairId,
+                      label: repairId,
+                      disposition: "no_issue_found",
+                      receiptRefs: ["artifacts/replacement.md"],
+                    },
+                  ],
+              resolvedDeferred: resolveWithFinding
+                ? []
+                : [{ id: "review", reason: "Review completed." }],
+            },
           },
-        }),
+        ),
       );
       const result = await validateDiscoveryArtifacts(
         worker.artifacts,
@@ -1338,7 +1374,8 @@ async function testCurrentReceiptSelectionBeforeArchivedHistory(root: string) {
         scanId,
       );
       assert.deepEqual(result.coverage.deferred, []);
-      assert.equal(result.coverage.surfaces.length, 2);
+      assert.equal(result.coverage.surfaces.length, resolveWithFinding ? 1 : 2);
+      assert.equal(result.findings.length, resolveWithFinding ? 1 : 0);
       const kept = result.coverage.surfaces.find(
         (row: JsonObject) => row.id === keptId,
       );
@@ -1352,7 +1389,8 @@ async function testCurrentReceiptSelectionBeforeArchivedHistory(root: string) {
       const repaired = result.coverage.surfaces.find(
         (row: JsonObject) => row.id === repairId,
       );
-      assert.deepEqual(repaired.receiptRefs, ["artifacts/replacement.md"]);
+      if (resolveWithFinding) assert.equal(repaired, undefined);
+      else assert.deepEqual(repaired.receiptRefs, ["artifacts/replacement.md"]);
       assert.equal(
         await readFile(path.join(archive, "result.json"), "utf8"),
         oldResult,

@@ -702,8 +702,14 @@ async function preserveScanDraft(
   );
   // Archived attempts move their receipt files with them. Copy only evidence
   // still retained by this draft into its current, independently bound output.
+  const retainedReceiptRefs = new Set(
+    (result.coverage.surfaces as JsonObject[]).flatMap(
+      (row) => (row.receiptRefs as string[] | undefined) ?? [],
+    ),
+  );
   const receiptPaths = new Map<string, string>();
   for (const ref of selectedReceiptRefs) {
+    if (!retainedReceiptRefs.has(ref)) continue;
     const normalized = ref
       .split("/")
       .filter((part) => part !== "" && part !== ".")
