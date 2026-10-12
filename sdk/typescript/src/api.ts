@@ -1917,7 +1917,6 @@ export class CodexSecurity {
         mode,
         skillName,
         scanId,
-        runtime.configPath !== undefined,
         knowledgeBase !== null,
         options.resumeScanId !== undefined &&
           typeof registration["userContext"] === "string"
@@ -4179,7 +4178,6 @@ function scanPrompt(
   mode: ScanMode,
   skillName: string,
   scanId: string,
-  hasConfigPath = false,
   hasKnowledgeBase = false,
   additionalPrompt?: string,
   enforceCostLimit = false,
@@ -4236,11 +4234,6 @@ function scanPrompt(
           'After the file inventory, after each fully reviewed file batch, and when entering each later phase, emit one standalone CODEX_SECURITY_SCAN_PROGRESS {"phase":"discovery","filesCompleted":3,"filesTotal":8} line in a completed command output or agent message. Use the actual phase and file counts. Never count unread or partially reviewed files.',
           'Every delegated review assignment must say: After each completed batch, emit CODEX_SECURITY_SCAN_PROGRESS {"phase":"discovery","filesCompleted":3,"filesTotal":8} on its own line using your worker-local reviewed and assigned file counts.',
         ]),
-    ...(hasConfigPath
-      ? [
-          `For normal config-preflight helper calls, append --config ${shellEnvironmentReference("CODEX_SECURITY_CONFIG_PATH")} so preflight reads the sanitized active runtime config. Preserve the documented runtime and --effective-config arguments for session-only values.`,
-        ]
-      : []),
     ...(hasKnowledgeBase
       ? [
           `The ${shellEnvironmentReference("CODEX_SECURITY_KNOWLEDGE_BASE")} environment variable contains primary documents about the project and its organization, including their architecture, threat model, and policies. These documents are a source of truth and override conflicting SECURITY.md guidance, generated threat models, and other sources, except explicit user instructions.`,

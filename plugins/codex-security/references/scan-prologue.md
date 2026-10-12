@@ -16,13 +16,9 @@ Preserve the complete exact user-provided security context, including user-suppl
 
 For a running host-backed scan, immediately persist requested additions, edits, clearances, or replacements with `update_codex_security_scan_context`, passing the complete replacement and current handoff token when required. At each genuine parent-owned forward phase transition, use `structuredContent.scan.userContext` from `update_codex_security_scan_progress` as the immutable context for that phase and its workers. Prompt-only scans retain their original context; independent workers retain the exact immutable context captured by their owner. Never repeat a completed phase or publish progress belonging to a currently running coordinator.
 
-## Standard Capability Preflight
+## Runtime Tools
 
-Only a top-level Standard scan reads `config-preflight.md` and runs its existing `security_scan` capability profile once. A desktop Standard host also follows `desktop-config-preflight.md` after its authoritative scan context exists. Resolve only the minimum target, scope, revision, or launch arguments needed beforehand; do not inspect source or launch Standard scan workers until the helper returns `ready`. Retain the existing host-specific direct/delegated execution, remediation, fallback, and degraded-worker behavior; configured worker capacity is not a required number of running workers.
-
-For a blocked, incomplete, or failed Standard preflight, report the exact reason and preserve any durable running scan while recovery remains possible. In an interactive session, present the helper-reported configuration path and exact remediation, then use the existing native input, MCP input, or plain-chat fallback before editing persistent configuration. In a headless or otherwise non-interactive session, apply only helper-provided ordinary patches to its reported `user_config_path`, rerun once, and continue only if the result becomes `ready`. Never guess the active configuration path or conceal a higher-precedence conflict with a lower-precedence change.
-
-A Deep scan has no parent capability preflight: do not load either preflight reference, inspect runtime tools, run the helper, request remediation, or publish preflight checks. Its coordinator validates the real scan ownership, target, scope, and sandbox and owns the existing transition from the durable `preflight` phase into discovery.
+A top-level Standard scan reads `scan-runtime.md` once after its authoritative scan context exists, then begins source review using available tools and parent fallback. A Deep scan's coordinator validates scan ownership, target, scope, and sandbox and owns the transition from `preflight` into discovery.
 
 ## Deep Worker Failures
 

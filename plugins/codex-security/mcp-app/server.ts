@@ -103,12 +103,6 @@ const diffTargetSchema = z.discriminatedUnion("kind", [
     headRevision: z.string().trim().min(1).max(512),
   }),
 ]);
-const currentScanPreflightCheckSchema = z.strictObject({
-  capability: z.string().trim().min(1).max(128),
-  reason: z.string().trim().min(1).max(1200),
-  severity: z.enum(["block", "warn", "suggest"]),
-  status: z.enum(["pass", "fail", "unknown"]),
-});
 const openSchema = {
   diffTarget: diffTargetSchema
     .optional()
@@ -372,13 +366,6 @@ const progressSchema = {
     .optional()
     .describe(
       "What phaseItemsTotal and phaseItemsCompleted count for the current phase.",
-    ),
-  preflightChecks: z
-    .array(currentScanPreflightCheckSchema)
-    .max(32)
-    .optional()
-    .describe(
-      "Current standard or diff scan preflight results. Project every helper results entry to capability, reason, severity, and status only. The server derives the item counts and visible block/warn attention items.",
     ),
   reportableFindingsCount: z.number().int().nonnegative().optional(),
   reviewItemsCompleted: z
@@ -1405,7 +1392,6 @@ export function createCodexSecurityServer(): McpServer {
         phaseItemsTotal,
         phaseItemsCompleted,
         phaseProgressUnit,
-        preflightChecks,
         reviewItemsTotal,
         reviewItemsCompleted,
         reportableFindingsCount,
@@ -1437,66 +1423,32 @@ export function createCodexSecurityServer(): McpServer {
           "Deep Scan is still preparing. Discovery progress begins after its setup worker succeeds.",
         );
       }
-      if (
-        preflightChecks !== undefined &&
-        (phaseItemsTotal !== undefined ||
-          phaseItemsCompleted !== undefined ||
-          phaseProgressUnit !== undefined)
-      ) {
-        throw new Error(
-          "preflightChecks derives phaseItemsTotal, phaseItemsCompleted, and phaseProgressUnit; omit those fields.",
-        );
-      }
-      const preflightIssues = preflightChecks?.filter(
-        (check) =>
-          (check.severity === "block" || check.severity === "warn") &&
-          (check.status === "fail" || check.status === "unknown"),
-      );
-      const derivedPhaseItemsTotal = preflightChecks?.length ?? phaseItemsTotal;
-      const derivedPhaseItemsCompleted = preflightChecks
-        ? preflightChecks.filter((check) => check.status !== "unknown").length
-        : phaseItemsCompleted;
-      const derivedPhaseProgressUnit = preflightChecks
-        ? "checks"
-        : phaseProgressUnit;
-      const serializedPreflightIssues = preflightIssues
-        ? JSON.stringify(preflightIssues)
-        : undefined;
       return scanActionResult(
-        await runWorkbench(
-          [
-            "update-progress",
-            "--scan-id",
-            scanId,
-            ...(scan?.mode === "deep"
-              ? deepScanStore.coordinatorLeaseArgs(scanId)
-              : []),
-            ...optionalArg("--model", modelSettings.model),
-            ...optionalArg("--reasoning-effort", modelSettings.reasoningEffort),
-            ...optionalArg("--claim-token", handoffClaimToken),
-            ...optionalNumberArg("--deep-review-pass", deepReviewPass),
-            ...optionalArg("--phase", phase),
-            ...optionalNumberArg("--phase-items-total", derivedPhaseItemsTotal),
-            ...optionalNumberArg(
-              "--phase-items-completed",
-              derivedPhaseItemsCompleted,
-            ),
-            ...optionalArg("--phase-progress-unit", derivedPhaseProgressUnit),
-            ...(serializedPreflightIssues
-              ? ["--preflight-issues-json-stdin"]
-              : []),
-            ...optionalNumberArg("--review-items-total", reviewItemsTotal),
-            ...optionalNumberArg(
-              "--review-items-completed",
-              reviewItemsCompleted,
-            ),
-            ...optionalNumberArg(
-              "--reportable-findings-count",
-              reportableFindingsCount,
-            ),
-          ],
-          serializedPreflightIssues,
-        ),
+        await runWorkbench([
+          "update-progress",
+          "--scan-id",
+          scanId,
+          ...(scan?.mode === "deep"
+            ? deepScanStore.coordinatorLeaseArgs(scanId)
+            : []),
+          ...optionalArg("--model", modelSettings.model),
+          ...optionalArg("--reasoning-effort", modelSettings.reasoningEffort),
+          ...optionalArg("--claim-token", handoffClaimToken),
+          ...optionalNumberArg("--deep-review-pass", deepReviewPass),
+          ...optionalArg("--phase", phase),
+          ...optionalNumberArg("--phase-items-total", phaseItemsTotal),
+          ...optionalNumberArg("--phase-items-completed", phaseItemsCompleted),
+          ...optionalArg("--phase-progress-unit", phaseProgressUnit),
+          ...optionalNumberArg("--review-items-total", reviewItemsTotal),
+          ...optionalNumberArg(
+            "--review-items-completed",
+            reviewItemsCompleted,
+          ),
+          ...optionalNumberArg(
+            "--reportable-findings-count",
+            reportableFindingsCount,
+          ),
+        ]),
         "Updated Codex Security scan progress.",
       );
     },
