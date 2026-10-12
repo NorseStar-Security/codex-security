@@ -610,6 +610,16 @@ async function assertHeadlessStandardScanWorksWithoutUiCapability() {
     assertNoError(joined);
     assert.equal(joined.result.structuredContent.startDisposition, "joined");
     assert.equal(joined.result.structuredContent.scanId, result.scanId);
+    for (const response of [started, joined]) {
+      assert.match(
+        response.result.content[0].text,
+        /references\/scan-runtime\.md/,
+      );
+      assert.doesNotMatch(
+        response.result.content[0].text,
+        /security_scan preflight/,
+      );
+    }
     assert.equal(
       joined.result.structuredContent.handoffClaimToken,
       result.handoffClaimToken,

@@ -341,7 +341,7 @@ export interface ScanOptions extends ScanSettings {
   onSessionEvent?: (event: ScanSessionEvent) => void;
   onProgress?: (progress: ScanProgress) => void;
   onDeepProgress?: (progress: DeepScanProgress) => void;
-  /** Preflight status and best-effort, model-reported phase dispatch counts. */
+  /** Best-effort, model-reported phase dispatch counts. */
   onWorkerStatus?: (status: ScanWorkerStatus) => void;
   /**
    * Reports each persisted worker session once when discovered during this run.
