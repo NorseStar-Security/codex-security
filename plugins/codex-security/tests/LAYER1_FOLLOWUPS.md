@@ -4,7 +4,7 @@ This file is the source of truth for portable deterministic, no-model Codex Secu
 
 ## Covered
 
-- **Python utilities:** unit and CLI tests cover capability preflight, scan contract finalization, rank-input generation and selection, and report format validation.
+- **Python utilities:** unit and CLI tests cover scan contract finalization, rank-input generation and selection, and report format validation.
 - **Schema validation:** Draft 2020-12 validators and checked-in completed-scan examples are validated with `jsonschema`, including RFC 3339 formats.
 - **Plugin metadata:** the plugin manifest, referenced assets, skill frontmatter, and agent interface YAML are parsed and checked for required fields and file consistency.
 - **Prompt linting:** agent default prompts are required to be non-empty.

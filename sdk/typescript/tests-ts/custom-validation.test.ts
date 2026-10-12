@@ -875,7 +875,8 @@ describe("custom validation", () => {
     const diff = await customDiscoveryPrompt(PLUGIN_ROOT, "security-diff-scan");
     expect(standard).toContain("## Baseline Auditor Prompt");
     expect(standard).toContain("## Focused Investigator Prompt");
-    expect(standard).toContain("security_scan` capability preflight");
+    expect(standard).toContain("<plugin_dir>/references/scan-prologue.md");
+    expect(diff).toContain("<plugin_dir>/references/scan-runtime.md");
     expect(standard).toContain("use it for the same early model checkpoint");
     expect(standard).toContain("retain the model in an early partial");
     expect(standard).not.toContain("undefined");
