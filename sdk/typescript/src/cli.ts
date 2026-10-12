@@ -1171,6 +1171,7 @@ interface CliDependencies {
   linearClient?: LinearClientFactory;
   importGitHubAlerts?: typeof importGitHubCodeScanningAlerts;
   importScan?: typeof importScan;
+  readSavedFindings?: typeof readSavedFindings;
   runWorkbench(
     args: readonly string[],
     input?: string,
@@ -6769,11 +6770,52 @@ async function selectSavedFindings(
       "The requested finding does not belong to the selected scan.",
     );
   }
+  const fullFindings =
+    selected.length === 0
+      ? []
+      : await (dependencies.readSavedFindings ?? readSavedFindings)(
+          scan.scanId,
+          dependencies.runWorkbench,
+        );
+  const byOccurrence = new Map(
+    fullFindings.map((finding) => [finding.occurrenceId, finding]),
+  );
   return {
     repository: scan.targetPath,
     scanId: scan.scanId,
-    findings: selected,
+    findings: selected.map((finding) => {
+      const full = byOccurrence.get(finding.occurrenceId);
+      if (full === undefined || full.findingId !== finding.findingId) {
+        throw new CodexSecurityError(
+          `Finding ${finding.occurrenceId} is missing from the saved scan artifacts.`,
+        );
+      }
+      return {
+        ...finding,
+        ...full,
+        ...(finding["triage"] === undefined
+          ? {}
+          : { triage: finding["triage"] }),
+      };
+    }),
   };
+}
+
+async function readSavedFindings(
+  scanId: string,
+  workbench: CliDependencies["runWorkbench"],
+): Promise<readonly Finding[]> {
+  const directory = await resolveSavedArtifactDirectory(
+    scanId,
+    "findings",
+    "json",
+    workbench,
+  );
+  const { findings } = await loadContract(directory, {
+    pluginRoot: await bundledPluginRoot(),
+    expectedScanId: scanId,
+  });
+  return findings.findings;
 }
 
 function patchExitCode(patches: readonly FindingPatch[]): number {
