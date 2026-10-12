@@ -13,6 +13,7 @@ const { WorkbenchDeepScanStore, parseDeepScan } = await importSource(
 );
 
 await testBeginProtocolAndParsing();
+await testScopeResponseParsing();
 await testCanonicalCommitProtocol();
 await testTerminalProtocol();
 testRunErrorParsing();
@@ -95,6 +96,36 @@ async function testBeginProtocolAndParsing() {
   });
   assert.equal(joined.scanId, scanId);
   assert.equal(flagValue(joinedArgs, "--claim-token"), claimToken);
+}
+
+async function testScopeResponseParsing() {
+  const scanId = randomUUID();
+  for (const includePaths of [
+    ["api", "background jobs/café", "", " ", "./literal/../path"],
+    [],
+    undefined,
+  ]) {
+    const store = new WorkbenchDeepScanStore(async () =>
+      stateResult(scanId, {
+        startDisposition: "created",
+        deepScan: { includePaths },
+      }),
+    );
+    const started = await store.begin({
+      threadId: "thread-fixture",
+      scanRoot: "/fixture/scans",
+    });
+    assert.deepEqual(started.includePaths, includePaths);
+    assert.equal(Object.hasOwn(started, "includePaths"), true);
+    const resumed = await store.get(scanId, "thread-fixture");
+    assert.deepEqual(resumed.includePaths, includePaths);
+  }
+  for (const includePaths of [null, "api", {}, ["api", 1]]) {
+    assert.throws(
+      () => parseDeepScan(stateResult(scanId, { deepScan: { includePaths } })),
+      { message: "deepScan.includePaths must be an array of paths." },
+    );
+  }
 }
 
 async function testWriteSerializationAndRecovery() {
