@@ -1,5 +1,6 @@
+import { normalizePersistedFindingDetails } from "./finding-normalization.js";
 import type { JsonObject } from "./types.js";
-import { isRecord as isObject, isNonEmptyString } from "./record.js";
+import { isRecord as isObject } from "./record.js";
 import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import { dirname, isAbsolute, join, posix, sep } from "node:path";
@@ -22,14 +23,16 @@ import {
 import { artifactSchemaDocuments } from "./artifact-contracts.js";
 import {
   loadArtifactZodSchema,
+  projectArtifactToolSchema,
   type SchemaDocument,
 } from "./artifact-schema-loader.js";
 import { saveThreatModelDocument } from "./threat-model-document.js";
 
-export const {
-  scanDraftInput: scanDraftInputSchema,
-  completedScanInput: completedScanInputSchema,
-} = artifactSchemaDocuments["tools/scan-draft"].$defs;
+const draftDefinitions = artifactSchemaDocuments["tools/scan-draft"].$defs;
+export const scanDraftInputSchema = projectArtifactToolSchema(
+  draftDefinitions.scanDraftInput,
+);
+export const completedScanInputSchema = draftDefinitions.completedScanInput;
 export type ScanDraftInput = z.infer<typeof scanDraftInputSchema>;
 type DraftCoverage = ScanDraftInput["coverage"];
 export type CompletedScanInput = z.infer<typeof completedScanInputSchema>;
@@ -52,6 +55,12 @@ interface PreparedScanDraft {
   manifest: JsonObject;
   findings: JsonObject;
   coverage: JsonObject;
+}
+
+/** Host-selected Deep aggregate, separate from model-authored draft fields. */
+export interface DeepScanPublication {
+  coordinatorGeneration?: number;
+  resultPath: string | null;
 }
 
 interface SavedScanDraft {
@@ -136,6 +145,7 @@ export async function recordCodexSecurityScanDraftViaWorkbench(
   input: unknown,
   runWorkbench: RunArtifactWorkbench,
   signal?: AbortSignal,
+  publication?: DeepScanPublication,
 ): Promise<ScanDraftResult> {
   const parsed = parseScanDraft(input);
   requireBoundScan(context, parsed, true);
@@ -173,6 +183,7 @@ export async function recordCodexSecurityScanDraftViaWorkbench(
         ? findingsWithinScope(
             reconciled.findings,
             scope.includePaths as string[],
+            trustedScope.filePaths as string[] | undefined,
           )
         : reconciled.findings;
     const findings = buildFindings(scopedFindings, context.mode);
@@ -218,7 +229,12 @@ export async function recordCodexSecurityScanDraftViaWorkbench(
       const { handoffClaimToken: _claim, ...snapshot } = checkpoint;
       await Promise.all([
         replaceArtifactJson(checkpointPath, snapshot),
-        replaceArtifactJson(draftPath, draft),
+        replaceArtifactJson(draftPath, {
+          ...draft,
+          ...(publication === undefined
+            ? {}
+            : { deepScanPublication: publication }),
+        }),
       ]);
       const arguments_ = [
         "write-scan-draft",
@@ -285,11 +301,19 @@ export async function recordCodexSecurityWorkerScanDraft(
   const includePaths = context.includePaths ?? [context.scope || "."];
   let scoped = {
     ...parsed,
-    findings: findingsWithinScope(parsed.findings, includePaths),
+    findings: findingsWithinScope(
+      parsed.findings,
+      includePaths,
+      context.filePaths,
+    ),
   };
   scoped = (await preserveScanDraft(context, scoped)).input;
   // Older checkpoints predate the coordinator's requested-path binding.
-  scoped.findings = findingsWithinScope(scoped.findings, includePaths);
+  scoped.findings = findingsWithinScope(
+    scoped.findings,
+    includePaths,
+    context.filePaths,
+  );
   const destination = await artifactDestination(
     context,
     ["result.json"],
@@ -316,13 +340,26 @@ export async function recordCodexSecurityWorkerScanDraft(
 export function findingsWithinScope<Finding extends JsonObject>(
   findings: Finding[],
   includePaths: readonly string[],
+  filePaths: readonly string[] = [],
 ): Finding[] {
-  if (includePaths.includes(".")) return findings;
+  const scopes = includePaths.map((scope) =>
+    posix.normalize(scope).replace(/\/$/u, ""),
+  );
+  if (scopes.includes(".")) return findings;
+  const files = new Set(
+    filePaths.map((path) => posix.normalize(path).replace(/\/$/u, "")),
+  );
+  const targets = scopes.map((scope) => ({
+    path: scope,
+    isFile: files.has(scope),
+  }));
   return findings.filter((finding) =>
     (finding.locations as JsonObject[]).some((location) => {
-      const path = (location.path as string).replace(/^\.\//u, "");
-      return includePaths.some(
-        (scope) => path === scope || path.startsWith(`${scope}/`),
+      const path = posix.normalize(location.path as string);
+      return targets.some(
+        (scope) =>
+          path === scope.path ||
+          (!scope.isFile && path.startsWith(`${scope.path}/`)),
       );
     }),
   );
@@ -1900,7 +1937,7 @@ function parsePersistedDraft(
 ): ScanDraftInput {
   if (Array.isArray(compatible.findings)) {
     for (const finding of compatible.findings) {
-      if (isObject(finding)) normalizePersistedFindingDetails(finding);
+      if (isObject(finding)) normalizePersistedFindingDetails(finding, "draft");
     }
   }
   return parseSemanticScanDraft(compatible, schema);
@@ -1938,171 +1975,6 @@ function parsePersistedCheckpoint(
     }
   }
   return parsePersistedDraft(compatible, schema);
-}
-
-function normalizePersistedFindingDetails(finding: JsonObject): void {
-  const canonicalEvidence = Array.isArray(finding.codeEvidence)
-    ? finding.codeEvidence
-    : [];
-  const evidenceIds = new Set(
-    canonicalEvidence.flatMap((evidence) => {
-      if (!isObject(evidence)) return [];
-      const id = evidence.id;
-      return isNonEmptyString(id) ? [id] : [];
-    }),
-  );
-  if (Array.isArray(finding.code_evidence)) {
-    const compatibleEvidence: JsonObject[] = [];
-    for (const evidence of finding.code_evidence) {
-      if (!isObject(evidence)) continue;
-      const id = evidence.id;
-      const code = evidence.code;
-      if (
-        !isNonEmptyString(id) ||
-        !isNonEmptyString(code) ||
-        evidenceIds.has(id)
-      ) {
-        continue;
-      }
-      evidenceIds.add(id);
-      compatibleEvidence.push(evidence);
-    }
-    finding.code_evidence = compatibleEvidence;
-  } else if ("code_evidence" in finding) {
-    delete finding.code_evidence;
-  }
-
-  for (const [sectionName, listFields] of [
-    ["rootCause", ["evidenceRefs", "evidence_refs"]],
-    ["root_cause", ["evidenceRefs", "evidence_refs"]],
-    [
-      "validation",
-      [
-        "assertions",
-        "counterEvidence",
-        "evidence",
-        "evidenceRefs",
-        "evidence_refs",
-        "limitations",
-      ],
-    ],
-    [
-      "attackPath",
-      [
-        "assumptions",
-        "blindspots",
-        "controls",
-        "evidenceRefs",
-        "evidence_refs",
-        "limitations",
-        "preconditions",
-        "steps",
-      ],
-    ],
-  ] satisfies Array<[string, string[]]>) {
-    const section = finding[sectionName];
-    if (!isObject(section)) continue;
-    normalizePersistedStringLists(section, listFields);
-  }
-
-  const rootCause = finding.rootCause;
-  if (isObject(rootCause)) {
-    if (!isNonEmptyString(rootCause.summary)) {
-      delete finding.rootCause;
-    } else {
-      removeUnsupportedPersistedStrings(rootCause, ["code", "language"]);
-    }
-  }
-  const legacyRootCause = finding.root_cause;
-  if (isObject(legacyRootCause)) {
-    removeUnsupportedPersistedStrings(legacyRootCause, [
-      "summary",
-      "code",
-      "language",
-    ]);
-  } else if ("root_cause" in finding && !isNonEmptyString(legacyRootCause)) {
-    delete finding.root_cause;
-  }
-
-  const validation = finding.validation;
-  if (isObject(validation)) {
-    removeUnsupportedPersistedStrings(validation, [
-      "method",
-      "status",
-      "summary",
-      "disposition",
-      "result",
-    ]);
-  }
-
-  const attackPath = finding.attackPath;
-  if (!isObject(attackPath)) return;
-  removeUnsupportedPersistedStrings(attackPath, ["summary"]);
-  for (const field of ["dataFlow", "data_flow", "dataflow", "reachability"]) {
-    const detail = attackPath[field];
-    if (!isObject(detail)) {
-      if (!isNonEmptyString(detail)) delete attackPath[field];
-      continue;
-    }
-    removeUnsupportedPersistedStrings(detail, [
-      "summary",
-      "source",
-      "sink",
-      "outcome",
-      ...(field === "reachability" ? ["attacker", "entrypoint"] : []),
-    ]);
-    normalizePersistedStringLists(detail, [
-      "evidenceRefs",
-      "evidence_refs",
-      "transformations",
-      ...(field === "reachability" ? ["preconditions"] : []),
-    ]);
-  }
-  for (const field of ["impact", "likelihood"]) {
-    const detail = attackPath[field];
-    if (isObject(detail)) {
-      removeUnsupportedPersistedStrings(detail, ["level", "rationale", "why"]);
-    } else if (
-      detail !== undefined &&
-      detail !== null &&
-      !isNonEmptyString(detail)
-    ) {
-      delete attackPath[field];
-    }
-  }
-
-  function normalizePersistedStringLists(
-    section: JsonObject,
-    fields: string[],
-  ): void {
-    for (const field of fields) {
-      if (!(field in section)) continue;
-      const value = section[field];
-      const normalized = isNonEmptyString(value)
-        ? [value]
-        : Array.isArray(value)
-          ? value.filter(isNonEmptyString)
-          : [];
-      if (normalized.length > 0) section[field] = normalized;
-      else delete section[field];
-    }
-    for (const field of ["evidenceRefs", "evidence_refs"]) {
-      const refs = section[field];
-      if (!Array.isArray(refs)) continue;
-      section[field] = refs.filter((ref) => evidenceIds.has(ref));
-    }
-  }
-}
-
-function removeUnsupportedPersistedStrings(
-  section: JsonObject,
-  fields: string[],
-): void {
-  for (const field of fields) {
-    if (field in section && !isNonEmptyString(section[field])) {
-      delete section[field];
-    }
-  }
 }
 
 function requireBoundScan(

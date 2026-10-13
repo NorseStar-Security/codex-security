@@ -1,3 +1,4 @@
+import { workbenchArgs } from "./workbench-arguments.js";
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import {
@@ -203,18 +204,13 @@ export async function importScan(
     signal?.throwIfAborted();
     const registration = await workbench(
       workbenchOptions,
-      [
-        "register-cli-scan",
-        "--repository",
+      workbenchArgs("register-cli-scan", {
         repository,
-        "--scan-dir",
         scanDir,
-        "--registration-json-stdin",
-        ...(options.archiveExisting ? ["--archive-existing"] : []),
-        ...(options.parentScanId === undefined
-          ? []
-          : ["--parent-scan-id", options.parentScanId]),
-      ],
+        registrationJsonStdin: true,
+        archiveExisting: Boolean(options.archiveExisting),
+        parentScanId: options.parentScanId,
+      }),
       JSON.stringify({
         recipe: {
           repository,
@@ -292,11 +288,10 @@ export async function importScan(
         { flag: "wx", signal },
       );
     }
-    await workbench(workbenchOptions, [
-      "prepare-scan-completion",
-      "--scan-id",
-      scanId,
-    ]);
+    await workbench(
+      workbenchOptions,
+      workbenchArgs("prepare-scan-completion", { scanId }),
+    );
     // Finalization normally recovers partial output. An import must retain every supplied row.
     const contract = await loadContract(scanDir, {
       pluginRoot,

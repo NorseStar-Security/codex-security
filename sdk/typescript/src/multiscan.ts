@@ -62,14 +62,7 @@ const LOCK_HEARTBEAT_MS = 5_000;
 const WINDOWS_DEVICE_PATH_NAME =
   /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu;
 
-interface MultiscanTask {
-  id: string;
-  repository: string;
-  revision: string;
-  mode: ScanMode;
-  scope?: string;
-  prompt?: string;
-}
+type MultiscanTask = ReturnType<typeof parseInventory>[number];
 
 interface MultiscanReceipt extends MultiscanTask {
   status: "completed" | "completed_with_incomplete_coverage" | "failed";
@@ -1070,7 +1063,7 @@ function parseInventory(
   source: string,
   directory: string,
   defaultMode: ScanMode,
-): MultiscanTask[] {
+) {
   const { data: rows, errors } = Papa.parse<string[]>(source, {
     delimiter: ",",
     skipEmptyLines: "greedy",
@@ -1132,7 +1125,7 @@ function parseInventory(
       id,
       repository: normalizeRepository(get("repository"), directory),
       revision,
-      mode,
+      mode: mode as ScanMode,
       ...(scope ? { scope } : {}),
       ...(prompt ? { prompt } : {}),
     };

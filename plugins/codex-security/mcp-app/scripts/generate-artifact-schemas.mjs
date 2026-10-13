@@ -1,4 +1,5 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { format } from "prettier";
@@ -141,6 +142,13 @@ async function save(path, schema, replacer) {
         `Artifact schema ${path} is out of date. Run node scripts/generate-artifact-schemas.mjs from mcp-app.`,
       );
   } else {
-    await writeFile(output, contents);
+    // Concurrent runtime builds must always read a complete schema document.
+    const temporary = `${fileURLToPath(output)}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(temporary, contents);
+      await rename(temporary, output);
+    } finally {
+      await rm(temporary, { force: true });
+    }
   }
 }

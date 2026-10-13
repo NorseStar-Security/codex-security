@@ -839,6 +839,10 @@ try {
     "obsolete.json",
   );
   await writeFile(obsoleteCheckpointPath, "{malformed obsolete checkpoint\n");
+  const deepPublication = {
+    coordinatorGeneration: 3,
+    resultPath: path.join(deepParentRoot, "workers", "reducer", "result.json"),
+  };
   const deepWorkbenchWrites = mock.fn(async (arguments_: string[]) => {
     assert.deepEqual(arguments_.slice(0, 3), [
       "write-scan-draft",
@@ -852,6 +856,8 @@ try {
       arguments_[arguments_.indexOf("--checkpoint-path") + 1];
     const staged = await readJson(draftPath);
     const stagedCheckpoint = await readJson(checkpointPath);
+    assert.deepEqual(staged.deepScanPublication, deepPublication);
+    assert.equal(stagedCheckpoint.deepScanPublication, undefined);
     assert.deepEqual(staged.findings, acceptedDeepFindings);
     assert.deepEqual(staged.coverage, acceptedDeepCoverage);
     assert.deepEqual(stagedCheckpoint.findings, acceptedDeepDraft.findings);
@@ -861,6 +867,8 @@ try {
     deepParentContext,
     acceptedDeepDraft,
     deepWorkbenchWrites,
+    undefined,
+    deepPublication,
   );
   assert.equal(
     deepWorkbenchWrites.mock.callCount(),

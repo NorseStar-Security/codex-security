@@ -5,6 +5,7 @@ import {
   saveScanDraftCheckpoint,
 } from "./artifact-scan-draft.js";
 import { artifactSchemaDocuments } from "./artifact-contracts.js";
+import { projectArtifactToolSchema } from "./artifact-schema-loader.js";
 import { saveThreatModelDocument } from "./threat-model-document.js";
 import {
   createDeepScanArtifacts,
@@ -20,10 +21,11 @@ import {
   type DeepReductionSources,
 } from "./deep-scan/artifact-validation.js";
 
-export const {
-  reducerInputs: deepReducerInputsInputSchema,
-  reductionInput: deepReductionInputSchema,
-} = artifactSchemaDocuments["tools/deep-reducer"].$defs;
+const reducerDefinitions = artifactSchemaDocuments["tools/deep-reducer"].$defs;
+export const deepReducerInputsInputSchema = reducerDefinitions.reducerInputs;
+export const deepReductionInputSchema = projectArtifactToolSchema(
+  reducerDefinitions.reductionInput,
+);
 
 /** Read the findings and scan context assigned to this reducer. */
 export async function getCodexSecurityDeepReducerInputs(

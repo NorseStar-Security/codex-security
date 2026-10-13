@@ -3093,7 +3093,13 @@ describe("CodexSecurity orchestration", () => {
     expect(createCodex.mock.lastCall?.[0]?.env).not.toHaveProperty(
       "Codex_Home",
     );
-    expect(prompt).toContain("$codex-security:security-scan");
+    expect(prompt).toContain(
+      shellEnvironmentReference(
+        "CODEX_SECURITY_PLUGIN_ROOT",
+        "/skills/security-scan/SKILL.md",
+      ),
+    );
+    expect(prompt).not.toContain("$codex-security:");
     expect(prompt).not.toContain("SDK-owned discovery workflow");
     expect(
       createCodex.mock.lastCall?.[0]?.config?.["mcp_servers"],
@@ -6252,6 +6258,208 @@ describe("CodexSecurity orchestration", () => {
     await client.close();
   });
 
+  test("isolates selected skill settings in generated snapshot-free Deep worker configs", async () => {
+    const root = await temporaryDirectory();
+    const started = Promise.withResolvers<void>();
+    let starts = 0;
+    const paths = new Set<string>();
+    const clients = await Promise.all(
+      [0, 1].map(async (index) => {
+        const repository = join(root, `repository-${index}`);
+        const codexHome = join(root, `home-${index}`);
+        const scanDir = join(root, `scan-${index}`);
+        const configPath = join(root, `worker-config-${index}.toml`);
+        const installedRoot = join(codexHome, "plugins", "cache", "selected");
+        const customSkill = {
+          path: join(root, `unrelated-${index}`, "SKILL.md"),
+          enabled: index === 0,
+        };
+        await Promise.all(
+          [repository, codexHome, scanDir].map((directory) =>
+            mkdir(directory, { mode: 0o700 }),
+          ),
+        );
+        const config: JsonObject = {
+          profile: "selected",
+          profiles: { selected: { skills: { config: [customSkill] } } },
+        };
+        const client = new TestClient(
+          { codexOverrides: config },
+          {
+            ...scanRuntimeDependencies(codexHome, scanDir),
+            prepareRuntime: runtimePreparer(codexHome, () => ({
+              configPath,
+              plugin: { ...preparedRuntime(codexHome).plugin, installedRoot },
+            })),
+            createCodex: (options) => ({
+              startThread: () => ({
+                id: null,
+                async runStreamed() {
+                  if (++starts === 2) started.resolve();
+                  await started.promise;
+                  expect(
+                    options.env?.["CODEX_SECURITY_DEEP_SCAN_CONFIG_PATH"],
+                  ).toBeUndefined();
+                  expect(options.env?.["CODEX_SECURITY_CONFIG_PATH"]).toBe(
+                    configPath,
+                  );
+                  paths.add(configPath);
+                  const saved = resolveCodexProfile(
+                    parseToml(await readFile(configPath, "utf8")) as JsonObject,
+                  );
+                  const effective = resolveCodexProfile(
+                    options.config as JsonObject,
+                  );
+                  expect(saved["skills"]).toEqual(effective["skills"]);
+                  const selections = (saved["skills"] as JsonObject)[
+                    "config"
+                  ] as JsonObject[];
+                  expect(selections).toContainEqual(customSkill);
+                  expect(selections).toContainEqual({
+                    path: join(
+                      installedRoot,
+                      "skills",
+                      "security-scan",
+                      "SKILL.md",
+                    ),
+                    enabled: false,
+                  });
+                  expect(JSON.stringify(selections)).not.toContain(
+                    `unrelated-${1 - index}`,
+                  );
+                  throw new Error("snapshot-free skill configuration captured");
+                },
+              }),
+            }),
+          },
+        );
+        return { client, repository };
+      }),
+    );
+    try {
+      const results = await Promise.allSettled(
+        clients.map(({ client, repository }) =>
+          client.run(repository, { mode: "deep" }).finally(started.resolve),
+        ),
+      );
+      for (const result of results)
+        expect(result).toMatchObject({
+          status: "rejected",
+          reason: expect.objectContaining({
+            message: "snapshot-free skill configuration captured",
+          }),
+        });
+      expect(starts).toBe(2);
+      expect(paths.size).toBe(2);
+    } finally {
+      started.resolve();
+      await Promise.all(clients.map(({ client }) => client.close()));
+    }
+  });
+
+  test.each(["standard", "deep"] as const)(
+    "loads the readable workflow and disables only denied cached skills for %s scans",
+    async (mode) => {
+      const { root, repository, codexHome, scanDir } = await scanDirectories();
+      const installedRoot = join(
+        codexHome,
+        "plugins",
+        "cache",
+        "codex-security",
+        "fixture-version",
+      );
+      const unrelated = {
+        path: join(root, "other-skill", "SKILL.md"),
+        enabled: true,
+      };
+      const deepScanConfigPath = join(codexHome, "deep-scan.toml");
+      const codexOverrides: JsonObject = {
+        profile: "selected",
+        profiles: { selected: { skills: { config: [unrelated] } } },
+      };
+      const before = structuredClone(codexOverrides);
+      let reachedScan = false;
+      const client = new TestClient(
+        { codexOverrides },
+        {
+          ...scanRuntimeDependencies(codexHome, scanDir),
+          prepareRuntime: runtimePreparer(codexHome, () => ({
+            configPath: join(codexHome, "scan-config.toml"),
+            deepScanConfigPath,
+            plugin: { ...preparedRuntime(codexHome).plugin, installedRoot },
+          })),
+          createCodex: (options) => ({
+            startThread: () => ({
+              id: null,
+              async runStreamed(prompt: string) {
+                reachedScan = true;
+                const workflow =
+                  mode === "deep" ? "deep-security-scan" : "security-scan";
+                expect(prompt).toContain(
+                  shellEnvironmentReference(
+                    "CODEX_SECURITY_PLUGIN_ROOT",
+                    `/skills/${workflow}/SKILL.md`,
+                  ),
+                );
+                expect(prompt).not.toContain("$codex-security:");
+                expect(prompt).toContain(
+                  shellEnvironmentReference(
+                    "CODEX_SECURITY_PLUGIN_ROOT",
+                    "/skills/<skill-name>/SKILL.md",
+                  ),
+                );
+                expect(options.env?.["CODEX_SECURITY_PLUGIN_ROOT"]).toBe(
+                  PLUGIN_ROOT,
+                );
+                const config = resolveCodexProfile(
+                  options.config as JsonObject,
+                );
+                const entries = (config["skills"] as JsonObject)[
+                  "config"
+                ] as JsonObject[];
+                expect(entries).toContainEqual(unrelated);
+                for (const entry of await readdir(join(PLUGIN_ROOT, "skills"), {
+                  withFileTypes: true,
+                })) {
+                  if (entry.isDirectory())
+                    expect(entries).toContainEqual({
+                      path: join(
+                        installedRoot,
+                        "skills",
+                        entry.name,
+                        "SKILL.md",
+                      ),
+                      enabled: false,
+                    });
+                }
+                expect(config["mcp_servers"]).toBeUndefined();
+                if (mode === "deep") {
+                  const worker = parseToml(
+                    await readFile(
+                      options.env!["CODEX_SECURITY_DEEP_SCAN_CONFIG_PATH"]!,
+                      "utf8",
+                    ),
+                  )["worker_runtime"] as JsonObject;
+                  expect(worker["skills"]).toEqual(config["skills"]);
+                }
+                throw new Error("readable workflow captured");
+              },
+            }),
+          }),
+        },
+      );
+      try {
+        await expect(client.run(repository, { mode })).rejects.toThrow(
+          "readable workflow captured",
+        );
+        expect(reachedScan).toBe(true);
+        expect(codexOverrides).toEqual(before);
+      } finally {
+        await client.close();
+      }
+    },
+  );
+
   test("encodes paths and runtime values as data before sending the scan prompt", async () => {
     const root = await temporaryDirectory();
     const injected =
@@ -6716,7 +6924,19 @@ describe("CodexSecurity orchestration", () => {
     expect(prompt()).toContain(
       `Scan target: Git diff from ${revision} to ${revision}.`,
     );
-    expect(prompt()).toContain("$codex-security:security-diff-scan");
+    expect(prompt()).toContain(
+      shellEnvironmentReference(
+        "CODEX_SECURITY_PLUGIN_ROOT",
+        "/skills/security-diff-scan/SKILL.md",
+      ),
+    );
+    expect(prompt()).not.toContain("$codex-security:");
+    expect(prompt()).toContain(
+      shellEnvironmentReference(
+        "CODEX_SECURITY_PLUGIN_ROOT",
+        "/skills/<skill-name>/SKILL.md",
+      ),
+    );
     expect(prompt()).toContain("record_codex_security_scan_draft");
     expect(prompt()).toContain("complete_codex_security_scan");
     expect(prompt()).not.toContain("do not finalize or seal them");
@@ -6729,7 +6949,13 @@ describe("CodexSecurity orchestration", () => {
     await expect(client.run(repository, { mode: "deep" })).rejects.toThrow(
       "prompt captured",
     );
-    expect(prompt()).toContain("$codex-security:deep-security-scan");
+    expect(prompt()).toContain(
+      shellEnvironmentReference(
+        "CODEX_SECURITY_PLUGIN_ROOT",
+        "/skills/deep-security-scan/SKILL.md",
+      ),
+    );
+    expect(prompt()).not.toContain("$codex-security:");
     expect(prompt()).not.toContain("record_codex_security_scan_draft");
     expect(prompt()).toContain("complete_codex_security_scan");
     expect(prompt()).not.toContain("do not finalize or seal them");
