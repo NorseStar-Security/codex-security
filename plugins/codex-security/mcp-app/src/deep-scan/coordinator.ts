@@ -362,7 +362,7 @@ export class DeepScanCoordinator {
             // Readers require coverage.json. The coordinator has accepted this
             // result, so mark it complete and leave review notes empty.
             coverage: {
-              completeness: "complete",
+              completeness: "complete" as const,
               surfaces: [],
               explicitExclusions: [],
               deferred: [],

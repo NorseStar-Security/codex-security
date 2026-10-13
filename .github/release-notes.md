@@ -237,6 +237,11 @@
 - bump napi from 3.14.0 to 3.14.1 in /plugins/codex-security/native ([#1617](https://github.com/openai/codex-security/pull/1617))
 - bump the third-party group across 2 directories with 2 updates ([#1615](https://github.com/openai/codex-security/pull/1615))
 - bump napi-derive from 3.6.10 to 3.6.11 in /plugins/codex-security/native ([#1618](https://github.com/openai/codex-security/pull/1618))
+- define compact artifact contracts in Zod ([#1575](https://github.com/openai/codex-security/pull/1575))
+- bump taiki-e/install-action from 2.87.24 to 2.87.26 ([#1616](https://github.com/openai/codex-security/pull/1616))
+- reuse runtime message and result handling ([#1583](https://github.com/openai/codex-security/pull/1583))
+- resolve workflows through readable plugin paths ([#1592](https://github.com/openai/codex-security/pull/1592))
+- share command argument encoding ([#1577](https://github.com/openai/codex-security/pull/1577))
 
 <!-- release-section: highlights:end -->
 

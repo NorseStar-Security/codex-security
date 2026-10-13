@@ -1,5 +1,4 @@
 import { readJson, writeJson } from "./support/json.ts";
-import type { ScanDraftInput } from "../src/artifact-scan-draft.js";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { hash } from "node:crypto";
@@ -1088,7 +1087,7 @@ for (const layout of ["standard", "diff", "worker"] as const) {
       );
       const pending = { id: "review", ...generic };
       const closing = f.draft({ resolvedDeferred: [close(pending.id)] }, true);
-      const fail = (input: ScanDraftInput) =>
+      const fail = (input: unknown) =>
         interruptDraftWrite(path.join(f.root, destination), () =>
           f.write(input),
         );

@@ -3888,8 +3888,7 @@ async function testPublicationUsesAcceptedReducerSnapshot() {
   );
   assert.equal(terminal?.status, "succeeded", terminal?.error);
   assert.equal(
-    (completed[0].findings[0].provenance as { candidateId: string })
-      .candidateId,
+    completed[0].findings[0].provenance.candidateId,
     "accepted-finding",
   );
   assert.equal(completed[0].coverage.completeness, "complete");

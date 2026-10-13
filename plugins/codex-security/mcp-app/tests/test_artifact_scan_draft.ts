@@ -3,7 +3,6 @@ import { readJson, snapshotScanDraft, writeJsonLine } from "./support/json.ts";
 import { mock } from "node:test";
 import { temporaryDirectory } from "./support/temporary-directories.ts";
 import type { ArtifactContext } from "../src/artifact-context.js";
-import type { ScanDraftInput } from "../src/artifact-scan-draft.js";
 type FixtureFinding = Record<string, unknown> & {
   provenance: Record<string, unknown>;
   identity?: { anchor: string; instance?: string };
@@ -104,7 +103,7 @@ try {
   });
 
   const rejectsDraft = (
-    input: ScanDraftInput,
+    input: unknown,
     error: RegExp,
     boundContext: ArtifactContext = context,
   ) => assert.rejects(recordCodexSecurityScanDraft(boundContext, input), error);
@@ -3030,10 +3029,7 @@ async function archiveFirstWorkerAttempt(output: string) {
 }
 
 // Projection cases below use the same fixture root but model independent scans.
-async function recordFreshScanDraft(
-  context: ArtifactContext,
-  input: ScanDraftInput,
-) {
+async function recordFreshScanDraft(context: ArtifactContext, input: unknown) {
   await Promise.all([
     ...[
       "scan-manifest.json",

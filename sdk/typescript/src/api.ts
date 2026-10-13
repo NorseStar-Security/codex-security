@@ -1,4 +1,5 @@
 /// <reference lib="esnext.disposable" preserve="true" />
+import { workbenchArgs } from "./workbench-arguments.js";
 
 import { isSafeNonNegativeInteger as safeInteger } from "./value.js";
 import {
@@ -32,6 +33,7 @@ import {
 } from "@openai/codex-sdk";
 import { z } from "zod";
 import { readThreatModelPath } from "./artifact-export.js";
+import { scanSkillConfig } from "./scan-skill-paths.js";
 import { isRecord } from "./record.js";
 import {
   createProfileCodex,
@@ -1650,13 +1652,10 @@ export class CodexSecurity {
                     }
                     await workbench(
                       { ...activeScan.options, signal: budgetSignal },
-                      [
-                        "set-scan-cost-limit",
-                        "--scan-id",
-                        activeScan.id,
-                        "--max-cost-usd",
-                        String(next),
-                      ],
+                      workbenchArgs("set-scan-cost-limit", {
+                        scanId: activeScan.id,
+                        maxCostUsd: String(next),
+                      }),
                     );
                     if (budgetSignal.aborted) return;
                     maxCostUsd = next;
@@ -1723,20 +1722,13 @@ export class CodexSecurity {
             ])
           : await workbench(
               workbenchOptions,
-              [
-                "register-cli-scan",
-                "--repository",
-                repo,
-                "--scan-dir",
+              workbenchArgs("register-cli-scan", {
+                repository: repo,
                 scanDir,
-                "--registration-json-stdin",
-                ...(options.archiveExisting === true
-                  ? ["--archive-existing"]
-                  : []),
-                ...(options.parentScanId === undefined
-                  ? []
-                  : ["--parent-scan-id", options.parentScanId]),
-              ],
+                registrationJsonStdin: true,
+                archiveExisting: options.archiveExisting === true,
+                parentScanId: options.parentScanId,
+              }),
               JSON.stringify({
                 recipe,
                 userContext: options.scanPrompt,
@@ -1887,7 +1879,7 @@ export class CodexSecurity {
                 ...workbenchOptions,
                 signal: AbortSignal.any([signal, progressSignal]),
               },
-              ["get-scan", "--scan-id", scanId],
+              workbenchArgs("get-scan", { scanId }),
             ),
           onProgress: (progress) =>
             notifyObserver(options, "onDeepProgress")(progress),
@@ -2128,13 +2120,10 @@ export class CodexSecurity {
           if (budgetRecovery !== null) budgetRecovery.threadId = threadId;
           tracker.start(threadId);
           try {
-            await workbench(workbenchOptions, [
-              "set-scan-thread",
-              "--scan-id",
-              scanId,
-              "--thread-id",
-              threadId,
-            ]);
+            await workbench(
+              workbenchOptions,
+              workbenchArgs("set-scan-thread", { scanId, threadId }),
+            );
           } catch (error) {
             notifyObserver(
               options,
@@ -2216,17 +2205,15 @@ export class CodexSecurity {
           completionCost = snapshot.cost;
           let preparation: JsonObject;
           try {
-            preparation = await workbench(workbenchOptions, [
-              "prepare-scan-completion",
-              "--scan-id",
-              scanId,
-            ]);
+            preparation = await workbench(
+              workbenchOptions,
+              workbenchArgs("prepare-scan-completion", { scanId }),
+            );
           } catch (error) {
-            const saved = await workbench(workbenchOptions, [
-              "get-scan",
-              "--scan-id",
-              scanId,
-            ]).catch(() => null);
+            const saved = await workbench(
+              workbenchOptions,
+              workbenchArgs("get-scan", { scanId }),
+            ).catch(() => null);
             const savedScan = isRecord(saved) ? saved["scan"] : undefined;
             const progress = isRecord(savedScan)
               ? savedScan["progress"]
@@ -2787,10 +2774,7 @@ export class CodexSecurity {
     await this.close();
   }
 
-  async #authentication(): Promise<{
-    codexHome: string;
-    environment: Record<string, string>;
-  }> {
+  async #authentication() {
     this.#requireOpen();
     const environment = selectedScanEnvironment(
       this.#runtime?.environment ?? this.#dependencies.environment,
@@ -3046,9 +3030,10 @@ export class CodexSecurity {
         );
       }
       const runtime = this.#runtime;
-      const effectiveConfig = scanCyberAccessConfig(
-        requestedConfig,
-        options.cyberAccessProgram,
+      const effectiveConfig = await scanSkillConfig(
+        scanCyberAccessConfig(requestedConfig, options.cyberAccessProgram),
+        runtime.plugin,
+        runtime.codexHome,
       );
       const approvalPolicy = scanApprovalPolicy(effectiveConfig);
       const preflightConfig = scanPreflightCodexConfig(effectiveConfig);
@@ -3392,18 +3377,13 @@ export class CodexSecurity {
       throwIfAborted(signal, scanDir);
       const registration = await workbench(
         workbenchOptions,
-        [
-          "register-cli-scan",
-          "--repository",
-          local.repository,
-          "--scan-dir",
+        workbenchArgs("register-cli-scan", {
+          repository: local.repository,
           scanDir,
-          "--registration-json-stdin",
-          ...(options.archiveExisting ? ["--archive-existing"] : []),
-          ...(options.parentScanId === undefined
-            ? []
-            : ["--parent-scan-id", options.parentScanId]),
-        ],
+          registrationJsonStdin: true,
+          archiveExisting: Boolean(options.archiveExisting),
+          parentScanId: options.parentScanId,
+        }),
         JSON.stringify({
           recipe: {
             ...scanRecipe({
@@ -3471,11 +3451,10 @@ export class CodexSecurity {
         output_tokens: 0,
       };
       const cost = estimateScanCost(model, usage);
-      await workbench(workbenchOptions, [
-        "prepare-scan-completion",
-        "--scan-id",
-        scanId,
-      ]);
+      await workbench(
+        workbenchOptions,
+        workbenchArgs("prepare-scan-completion", { scanId }),
+      );
       const completion = await workbench(workbenchOptions, [
         "complete-scan",
         "--scan-id",
@@ -4187,8 +4166,10 @@ function scanPrompt(
   const python = pluginPythonCommand();
   const customValidation = discoveryPrompt !== undefined;
   return [
+    "Use [$codex-security](mcp://codex-security) for this scan's artifact tools.",
     discoveryPrompt ??
-      `Use the installed $codex-security:${skillName} skill at ${shellEnvironmentReference("CODEX_SECURITY_PLUGIN_ROOT", `/skills/${skillName}/SKILL.md`)}.`,
+      `Read ${shellEnvironmentReference("CODEX_SECURITY_PLUGIN_ROOT", `/skills/${skillName}/SKILL.md`)} and follow that ${skillName} workflow. Resolve all of its plugin-relative references and helpers from ${shellEnvironmentReference("CODEX_SECURITY_PLUGIN_ROOT")}. This is the readable copy of the selected plugin; its installed cache under CODEX_HOME is intentionally denied.`,
+    `For a Codex Security skill invoked by the assigned workflow, remove any codex-security: prefix from its name, read ${shellEnvironmentReference("CODEX_SECURITY_PLUGIN_ROOT", "/skills/<skill-name>/SKILL.md")}, and follow that file. Resolve its relative references from its directory. Give delegated workers the same readable skill paths. Load only skills required by the assigned workflow.`,
     "Run this Codex Security scan non-interactively.",
     ...(modelProvider === "amazon-bedrock"
       ? [
@@ -4919,6 +4900,18 @@ export function scanPreflightCodexConfig(config: JsonObject): JsonObject {
     }
     const features = capabilityFeatures(source["features"]);
     if (Object.keys(features).length > 0) result["features"] = features;
+    const skills = source["skills"];
+    if (isRecord(skills) && Array.isArray(skills["config"])) {
+      result["skills"] = {
+        config: skills["config"].flatMap((entry) =>
+          isRecord(entry) &&
+          safeString(entry["path"]) &&
+          typeof entry["enabled"] === "boolean"
+            ? [{ path: entry["path"], enabled: entry["enabled"] }]
+            : [],
+        ),
+      };
+    }
     const agents = source["agents"];
     if (isRecord(agents)) {
       const sanitized: JsonObject = {};
@@ -5111,6 +5104,7 @@ function selectedWorkerRuntimeConfig(
         "model_instructions_file",
         "model_verbosity",
         "shell_environment_policy",
+        "skills",
         "web_search",
         "windows",
       ]
