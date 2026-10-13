@@ -223,6 +223,10 @@
 - inspect unpacked files for internal references ([#618](https://github.com/openai/codex-security/pull/618))
 - retain fragmented input and final scan activity ([#1284](https://github.com/openai/codex-security/pull/1284))
 - prevent replaced coordinators from overwriting scan results ([#916](https://github.com/openai/codex-security/pull/916))
+- remove repeated Python message projections ([#1576](https://github.com/openai/codex-security/pull/1576))
+- serialize registrations with archival ([#1587](https://github.com/openai/codex-security/pull/1587))
+- preserve pager state in reducer retry guidance ([#1589](https://github.com/openai/codex-security/pull/1589))
+- exclude forbidden fields from artifact tool schemas ([#1588](https://github.com/openai/codex-security/pull/1588))
 
 <!-- release-section: highlights:end -->
 
