@@ -1,6 +1,6 @@
 import { isDeepStrictEqual as sameArray } from "node:util";
 import { createHash, hash } from "node:crypto";
-import { isNonEmptyString } from "./value.js";
+import { normalizePersistedFindingDetails } from "./finding-normalization.js";
 import { constants, type BigIntStats, type Stats } from "node:fs";
 import {
   lstat,
@@ -15,7 +15,6 @@ import { regexes } from "zod";
 import { ContractValidationError, abortReason } from "./errors.js";
 import { isRecord } from "./record.js";
 import type {
-  ContractObject as JsonRecord,
   CoverageDocument,
   FindingsDocument,
   ScanManifest,
@@ -192,144 +191,9 @@ export function normalizePersistedFindings(payload: unknown): unknown {
   }
   for (const finding of compatible["findings"]) {
     if (!isRecord(finding)) continue;
-    const legacyEvidence = finding["code_evidence"];
-    if (Array.isArray(legacyEvidence)) {
-      finding["code_evidence"] = legacyEvidence.filter(
-        (evidence) =>
-          isRecord(evidence) &&
-          isNonEmptyString(evidence["id"]) &&
-          isNonEmptyString(evidence["code"]),
-      );
-    } else if ("code_evidence" in finding && legacyEvidence !== null) {
-      delete finding["code_evidence"];
-    }
-
-    for (const [sectionName, listFields] of [
-      ["rootCause", ["evidenceRefs", "evidence_refs"]],
-      ["root_cause", ["evidenceRefs", "evidence_refs"]],
-      [
-        "validation",
-        [
-          "assertions",
-          "counterEvidence",
-          "evidenceRefs",
-          "evidence_refs",
-          "limitations",
-        ],
-      ],
-      [
-        "attackPath",
-        [
-          "assumptions",
-          "blindspots",
-          "controls",
-          "evidenceRefs",
-          "evidence_refs",
-          "limitations",
-          "preconditions",
-          "steps",
-        ],
-      ],
-    ] satisfies Array<[string, string[]]>) {
-      const section = finding[sectionName];
-      if (!isRecord(section)) continue;
-      normalizeLegacyStringLists(section, listFields);
-    }
-
-    const legacyRootCause = finding["root_cause"];
-    if (isRecord(legacyRootCause)) {
-      removeUnsupportedLegacyStrings(legacyRootCause, [
-        "summary",
-        "code",
-        "language",
-      ]);
-    } else if (
-      "root_cause" in finding &&
-      legacyRootCause !== null &&
-      typeof legacyRootCause !== "string"
-    ) {
-      delete finding["root_cause"];
-    }
-
-    const validation = finding["validation"];
-    if (isRecord(validation)) {
-      if (!isNonEmptyString(validation["evidence"])) {
-        normalizeLegacyStringLists(validation, ["evidence"]);
-      }
-      removeUnsupportedLegacyStrings(validation, ["method", "summary"]);
-      removeUnsupportedLegacyStrings(
-        validation,
-        ["status", "disposition", "result"].filter(
-          (field) => validation[field] !== null,
-        ),
-      );
-    }
-
-    const attackPath = finding["attackPath"];
-    if (!isRecord(attackPath)) continue;
-    removeUnsupportedLegacyStrings(attackPath, ["summary"]);
-    for (const field of ["dataFlow", "data_flow", "dataflow", "reachability"]) {
-      const detail = attackPath[field];
-      if (!isRecord(detail)) {
-        if (!isNonEmptyString(detail)) delete attackPath[field];
-        continue;
-      }
-      removeUnsupportedLegacyStrings(detail, [
-        "summary",
-        "source",
-        "sink",
-        "outcome",
-        ...(field === "reachability" ? ["attacker", "entrypoint"] : []),
-      ]);
-      normalizeLegacyStringLists(detail, [
-        "evidenceRefs",
-        "evidence_refs",
-        "transformations",
-        ...(field === "reachability" ? ["preconditions"] : []),
-      ]);
-    }
-    for (const field of ["impact", "likelihood"]) {
-      const detail = attackPath[field];
-      if (isRecord(detail)) {
-        removeUnsupportedLegacyStrings(detail, ["level", "rationale", "why"]);
-      } else if (
-        detail !== undefined &&
-        detail !== null &&
-        !isNonEmptyString(detail)
-      ) {
-        delete attackPath[field];
-      }
-    }
+    normalizePersistedFindingDetails(finding, "canonical");
   }
   return compatible;
-}
-
-function normalizeLegacyStringLists(
-  section: JsonRecord,
-  fields: string[],
-): void {
-  for (const field of fields) {
-    if (!(field in section)) continue;
-    const value = section[field];
-    if (Array.isArray(value)) {
-      section[field] = value.filter(isNonEmptyString);
-    } else if (isNonEmptyString(value)) {
-      section[field] = [value];
-    } else {
-      delete section[field];
-    }
-  }
-}
-
-function removeUnsupportedLegacyStrings(
-  section: JsonRecord,
-  fields: string[],
-): void {
-  for (const field of fields) {
-    if (field in section && !isNonEmptyString(section[field])) {
-      delete section[field];
-    }
-  }
 }
 
 function validateCanonicalContract(
