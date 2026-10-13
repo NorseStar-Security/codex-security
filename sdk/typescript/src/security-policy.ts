@@ -24,7 +24,7 @@ import {
   sep,
 } from "node:path";
 import { promisify } from "node:util";
-import { z } from "incur";
+import { z } from "zod";
 import type { ScanAuthentication, ScanOptions } from "./api.js";
 import { jsonForPrompt } from "./codex-prompt.js";
 import type { ScanModelConfiguration } from "./config.js";
@@ -138,12 +138,9 @@ const securityPolicyStageSchema = z.strictObject({
   blockedReason: z.string().nullable(),
 });
 
-export interface SecurityPolicyStageResult {
-  markdown: string;
-  questions: string[];
-  reviewNotes: string[];
-  blockedReason: string | null;
-}
+export interface SecurityPolicyStageResult extends z.infer<
+  typeof securityPolicyStageSchema
+> {}
 
 export function securityPolicyStageOutputSchema(): Record<string, unknown> {
   return z.toJSONSchema(securityPolicyStageSchema, {

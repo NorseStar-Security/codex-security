@@ -878,6 +878,8 @@ describe("custom validation", () => {
     expect(standard).toContain("security_scan` capability preflight");
     expect(standard).toContain("use it for the same early model checkpoint");
     expect(standard).toContain("retain the model in an early partial");
+    expect(standard).toContain("`followup_task`");
+    expect(standard).toContain("`send_message`");
     expect(standard).not.toContain("undefined");
     expect(standard).not.toContain(
       "Independently validate each unique finding",
