@@ -236,6 +236,7 @@
 - finish saving cancellation before returning to callers ([#1260](https://github.com/openai/codex-security/pull/1260))
 - bump napi from 3.14.0 to 3.14.1 in /plugins/codex-security/native ([#1617](https://github.com/openai/codex-security/pull/1617))
 - bump the third-party group across 2 directories with 2 updates ([#1615](https://github.com/openai/codex-security/pull/1615))
+- bump napi-derive from 3.6.10 to 3.6.11 in /plugins/codex-security/native ([#1618](https://github.com/openai/codex-security/pull/1618))
 
 <!-- release-section: highlights:end -->
 
