@@ -10,7 +10,10 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { importModule } from "./import-module.ts";
-import type { ScanDraftInput } from "../src/artifact-scan-draft.js";
+import type {
+  DeepScanPublication,
+  ScanDraftInput,
+} from "../src/artifact-scan-draft.js";
 import {
   DeepScanCoordinator,
   FakeExecutor,
@@ -42,6 +45,7 @@ await testLateParentDraftPreservesCheckpointWithoutOverwritingTerminalSeal();
 await testRecoveredPublicationRejectsLateFailure();
 await testNoopStoppedRefreshRetainsPublicationFailure();
 await testConcurrentParentDraftsPreserveBothCheckpoints();
+await testReplacementFailureDuringCancellation();
 await testCoordinatorCommitResponseRecovery();
 await testCoordinatorCommitResponseRecovery("commit-deep-scan-dedup");
 await testCoordinatorCommitResponseRecovery("finish-deep-scan");
@@ -120,7 +124,11 @@ async function testCoordinatorCommitResponseRecovery(
       threadId,
       executor: new FakeExecutor(),
       heartbeatIntervalMs: 60_000,
-      onComplete: async (draft: ScanDraftInput, signal: AbortSignal) => {
+      onComplete: async (
+        draft: ScanDraftInput,
+        signal: AbortSignal,
+        publication: DeepScanPublication,
+      ) => {
         const context = await createScanArtifactContext(
           run.scanId,
           runWorkbench,
@@ -134,6 +142,7 @@ async function testCoordinatorCommitResponseRecovery(
           draft,
           runWorkbench,
           signal,
+          publication,
         );
       },
     });
@@ -279,6 +288,11 @@ async function testRecoveredPublicationRejectsLateFailure() {
         "Publication recovery remains pending.",
       ),
       runWorkbench,
+      undefined,
+      {
+        coordinatorGeneration: claim.run.coordinatorGeneration,
+        resultPath: null,
+      },
     );
     await runWorkbench([
       "cancel-scan",
@@ -1025,3 +1039,118 @@ async function writePrivateFile(filePath: string, content: string) {
 }
 
 console.log("deep scan store integration tests passed");
+
+async function testReplacementFailureDuringCancellation() {
+  const { fixtureRoot, targetPath, environment } = await createWorkbenchFixture(
+    "deep-scan-cancel-replacement-",
+  );
+  const runWorkbench = createWorkbenchRunner(environment);
+  const cancellationEntered = Promise.withResolvers<void>();
+  const releaseCancellation = Promise.withResolvers<void>();
+  let coordinator: InstanceType<typeof DeepScanCoordinator> | undefined;
+  let cancellation: Promise<void> | undefined;
+  try {
+    const threadId = "cancel-replacement-owner";
+    const store = new WorkbenchDeepScanStore(runWorkbench);
+    const run = await store.begin({
+      targetPath,
+      scope: ".",
+      threadId,
+      scanRoot: path.join(fixtureRoot, "scans"),
+    });
+    const claim = await store.claimCoordinator({
+      scanId: run.scanId,
+      threadId,
+    });
+    assert.equal(claim.acquired, true);
+    const executor = new FakeExecutor({ blockDiscoveryAfterCalls: 0 });
+    let publications = 0;
+    coordinator = new DeepScanCoordinator({
+      run: claim.run,
+      store,
+      executor,
+      pluginRoot,
+      threadId,
+      heartbeatIntervalMs: 60_000,
+      onStopped: async () => {
+        publications += 1;
+      },
+    });
+    coordinator.start();
+    const settled = coordinator.settled();
+    await Promise.race([
+      executor.discoveryStarted.promise,
+      settled.then(() => assert.fail("coordinator stopped before discovery")),
+    ]);
+    cancellation = assert.rejects(
+      coordinator.cancelAfterPersistence(
+        "user_cancel",
+        async () => {
+          cancellationEntered.resolve();
+          await releaseCancellation.promise;
+          await runWorkbench(["cancel-scan", "--scan-id", run.scanId]);
+        },
+        async () => {
+          const parent = (
+            await runWorkbench(["get-scan", "--scan-id", run.scanId])
+          ).workspace.results;
+          return {
+            status: parent.progress.status,
+            failureMessage: parent.failureMessage,
+          };
+        },
+      ),
+      /Only a running scan can be canceled/,
+    );
+    await cancellationEntered.promise;
+    assert.equal(executor.runningDiscovery, 0);
+    assert.equal((await store.get(run.scanId, threadId)).status, "running");
+
+    // Expire only the lease clock; claim and failure use the real workbench.
+    await execFileAsync(process.env.PYTHON?.trim() || "python3", [
+      "-c",
+      `import sqlite3, sys
+connection = sqlite3.connect(sys.argv[1])
+connection.execute("UPDATE deep_scan_runs SET updated_at = ? WHERE scan_id = ?", ("2000-01-01T00:00:00Z", sys.argv[2]))
+connection.commit()`,
+      path.join(environment.CODEX_SECURITY_STATE_DIR, "workbench.sqlite3"),
+      run.scanId,
+    ]);
+    await rm(
+      path.join(
+        run.scanDir,
+        "artifacts",
+        "deep_discovery",
+        `coordinator-heartbeat-${claim.run.coordinatorGeneration}.json`,
+      ),
+      { force: true },
+    );
+    const replacement = new WorkbenchDeepScanStore(runWorkbench);
+    const adopted = await replacement.claimCoordinator({
+      scanId: run.scanId,
+      threadId,
+    });
+    assert.equal(adopted.acquired, true);
+    assert.equal(
+      adopted.run.coordinatorGeneration,
+      claim.run.coordinatorGeneration + 1,
+    );
+    const failure = await replacement.fail(run.scanId, "replacement failure");
+    assert.equal(failure.status, "failed");
+    releaseCancellation.resolve();
+    await cancellation;
+    const terminal = await settled;
+    assert.equal(terminal.status, "failed");
+    assert.equal(terminal.error, "replacement failure");
+    assert.equal(
+      terminal.coordinatorGeneration,
+      adopted.run.coordinatorGeneration,
+    );
+    assert.equal(publications, 0, "the old generation must not publish");
+  } finally {
+    releaseCancellation.resolve();
+    coordinator?.cancel("fixture_cleanup");
+    await Promise.allSettled([cancellation, coordinator?.settled()]);
+    await rm(fixtureRoot, { recursive: true, force: true });
+  }
+}
