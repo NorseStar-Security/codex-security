@@ -50,9 +50,9 @@ class FinalizeScanContractTest(ScanFixtureTestCase):
         self.coverage["scanId"] = "scan_001"
         self.coverage["includePaths"] = ["src/"]
 
-    def write_sealed_scan(self) -> None:
+    def write_sealed_scan(self) -> tuple[dict, dict, dict]:
         self.write_scan()
-        FINALIZER.finalize_scan(self.scan_dir)
+        return FINALIZER.finalize_scan(self.scan_dir)
 
     def compatible_finding(self, findings: dict) -> dict:
         original = copy.deepcopy(findings)
