@@ -860,7 +860,7 @@ def writer(repository: Path, kind: str) -> dict:
         )
         assert (
             command("get-scan-recipe", "--scan-id", registered["scanId"])["recipe"]
-            == recipe
+            == {**recipe, "scopeFilePaths": ["selected.py"]}
         )
     else:
         raise AssertionError("Unknown scan writer: " + kind)

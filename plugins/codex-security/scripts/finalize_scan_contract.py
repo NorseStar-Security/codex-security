@@ -2930,7 +2930,7 @@ def _prepare_scan_finalization(
     completion_binding: dict[str, Any] | None = None,
     completion_warnings: list[str] | None = None,
     draft_documents: tuple[dict[str, Any], dict[str, Any], dict[str, Any]] | None = None,
-    finding_scope: list[str] | None = None,
+    finding_scope: list[tuple[str, bool]] | None = None,
 ) -> PreparedScanFinalization:
     """Read, populate, and validate a scan without writing any output files."""
 
@@ -3019,9 +3019,11 @@ def _prepare_scan_finalization(
             finding
             for finding in findings["findings"]
             if any(
-                path_within_scope(location["path"], path)
+                PurePosixPath(location["path"]) == PurePosixPath(path)
+                if is_file
+                else path_within_scope(location["path"], path)
                 for location in finding["locations"]
-                for path in finding_scope
+                for path, is_file in finding_scope
             )
         ]
         if was_sealed and len(scoped_findings) != len(findings["findings"]):
