@@ -41,6 +41,67 @@ const findingFor = (candidateId: string) => ({
   provenance: { source: "local_plugin", candidateId },
 });
 
+test("persisted draft recovery preserves evidence while removing unsupported optional details", async (t) => {
+  const f = await fixture(t, "worker");
+  const evidence = {
+    id: "canonical-source",
+    label: "Synthetic evidence",
+    path: "src/example.py",
+    startLine: 1,
+    code: "example()",
+    explanation: "Synthetic recovery fixture.",
+  };
+  const legacyEvidence = { id: "legacy-source", code: "legacy_example()" };
+  const input = {
+    ...f.draft(),
+    findings: [
+      {
+        ...findingFor("candidate-1"),
+        codeEvidence: [evidence],
+        code_evidence: [
+          evidence,
+          legacyEvidence,
+          legacyEvidence,
+          { id: " ", code: " " },
+          null,
+        ],
+        rootCause: { summary: " " },
+        root_cause: null,
+        validation: {
+          evidence: "single proof",
+          counterEvidence: [],
+          status: null,
+          evidenceRefs: ["canonical-source", "legacy-source", "missing"],
+        },
+        attackPath: {
+          steps: [" ", "Check the entrypoint", null],
+          reachability: {
+            attacker: false,
+            preconditions: [],
+            evidence_refs: ["missing"],
+          },
+        },
+      },
+    ],
+  };
+  const original = structuredClone(input);
+  const recovered = draftApi.parsePersistedScanDraft(input).findings[0];
+
+  assert.deepEqual(recovered.codeEvidence, [evidence]);
+  assert.deepEqual(recovered.code_evidence, [legacyEvidence]);
+  assert.equal(recovered.rootCause, undefined);
+  assert.equal(recovered.root_cause, undefined);
+  assert.deepEqual(recovered.validation, {
+    evidence: ["single proof"],
+    evidenceRefs: ["canonical-source", "legacy-source"],
+  });
+  assert.deepEqual(recovered.attackPath, {
+    steps: ["Check the entrypoint"],
+    reachability: { evidence_refs: [] },
+  });
+  assert.deepEqual(input, original);
+});
+
 test("worker checkpoints retain typed surface IDs", async (t) => {
   const f = await fixture(t, "worker");
   await f.write(

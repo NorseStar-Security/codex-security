@@ -1,9 +1,9 @@
 import { findingEntry } from "./value.js";
-import { z } from "incur";
+import { z } from "zod";
 import { CodexSecurityError } from "./errors.js";
 import { workflowDigest } from "./finding-workflow.js";
 import { readKnowledgeBaseDocuments } from "./knowledge-base.js";
-import type { Finding, SeverityLevel } from "./models.js";
+import type { Finding } from "./models.js";
 import {
   runReadOnlyCodex,
   type ReadOnlyCodexOptions,
@@ -35,17 +35,10 @@ export interface ClassifySeverityOptions extends Pick<
   codex?: ReadOnlyCodexOptions["codex"];
 }
 
-export interface SeverityAssessment {
-  findingId: string;
+export interface SeverityAssessment extends z.infer<typeof decisionSchema> {
   occurrenceId: string | null;
   inputSha256: string;
   source: "existing-severity" | "rubric";
-  decision: "assessed" | "excluded";
-  level: SeverityLevel | null;
-  rubricLabel: string | null;
-  rationale: string;
-  confidence: "high" | "medium" | "low" | null;
-  reviewTrigger: string | null;
 }
 
 export interface SeverityClassification {

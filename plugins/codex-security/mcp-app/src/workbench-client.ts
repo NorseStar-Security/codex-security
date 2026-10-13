@@ -99,10 +99,7 @@ async function executeWorkbench(
       windowsHide: true,
       env: process.env,
       encoding: "utf8" as const,
-      // Preserve complete artifact bytes and issue receipt diagnostics/history.
-      maxBuffer: ["read-artifact", "finding-issues"].includes(args[0] ?? "")
-        ? Infinity
-        : 4 * 1024 * 1024,
+      maxBuffer: Infinity,
       timeout,
     },
   );
