@@ -227,6 +227,11 @@
 - serialize registrations with archival ([#1587](https://github.com/openai/codex-security/pull/1587))
 - preserve pager state in reducer retry guidance ([#1589](https://github.com/openai/codex-security/pull/1589))
 - exclude forbidden fields from artifact tool schemas ([#1588](https://github.com/openai/codex-security/pull/1588))
+- clarify tool selection and worker follow-ups ([#1591](https://github.com/openai/codex-security/pull/1591))
+- derive result interfaces from schemas ([#1579](https://github.com/openai/codex-security/pull/1579))
+- include native compaction usage ([#1590](https://github.com/openai/codex-security/pull/1590))
+- share persisted finding normalization ([#1574](https://github.com/openai/codex-security/pull/1574))
+- preserve Windows process launch behavior ([#1601](https://github.com/openai/codex-security/pull/1601))
 
 <!-- release-section: highlights:end -->
 
