@@ -243,6 +243,7 @@
 - resolve workflows through readable plugin paths ([#1592](https://github.com/openai/codex-security/pull/1592))
 - share command argument encoding ([#1577](https://github.com/openai/codex-security/pull/1577))
 - simplify plugin tests and validation example ([#1621](https://github.com/openai/codex-security/pull/1621))
+- correct GitLab patch publication ([#817](https://github.com/openai/codex-security/pull/817))
 
 <!-- release-section: highlights:end -->
 

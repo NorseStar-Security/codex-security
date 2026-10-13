@@ -6810,6 +6810,9 @@ async function publishPatchBranch(
             gitlabHost.includes("://") ? gitlabHost : `https://${gitlabHost}`,
           ));
     const command = gitlab ? "glab" : "gh";
+    const gitlabRepository = remote.includes("://")
+      ? remote
+      : `ssh://${remote.replace(":", "/")}`;
     let url = await run(
       command,
       gitlab
@@ -6822,9 +6825,9 @@ async function publishPatchBranch(
             "--output",
             "json",
             "--jq",
-            ".[0].web_url // empty",
+            "map(select(.source_project_id == .target_project_id))[0].web_url // empty",
             "--repo",
-            remote,
+            gitlabRepository,
           ]
         : [
             "pr",
@@ -6849,16 +6852,16 @@ async function publishPatchBranch(
               "create",
               "--draft",
               "--head",
-              remote,
+              gitlabRepository,
               "--source-branch",
               branch,
               "--title",
               PATCH_PR_TITLE,
               "--description",
-              body,
+              gitlabPatchDescription(body),
               "--yes",
               "--repo",
-              remote,
+              gitlabRepository,
             ]
           : [
               "pr",
@@ -6883,6 +6886,16 @@ async function publishPatchBranch(
     );
     throw error;
   }
+}
+
+function gitlabPatchDescription(body: string): string {
+  // GitLab ignores quick actions inside its native fenced blockquotes. Choose
+  // a fence the report cannot close after quick-action CR removal; preserve its
+  // original bytes and end the outer quote at EOF.
+  let fenceLength = 3;
+  for (const match of body.replaceAll("\r", "").matchAll(/^[ \t]*(>+)/gmu))
+    fenceLength = Math.max(fenceLength, match[1]!.length + 1);
+  return `${">".repeat(fenceLength)}\n${body}`;
 }
 
 function patchRemoteHost(remote: string): string | undefined {
