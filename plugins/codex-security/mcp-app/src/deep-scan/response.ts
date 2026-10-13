@@ -74,6 +74,7 @@ export const runSchema = z
       ),
       config: configSchema,
       includePaths: z.array(z.string()).optional(),
+      filePaths: z.array(z.string()).optional(),
       scanId: requiredString,
       coordinatorGeneration: optionalValue(positiveInteger),
       createdAt: optionalString,
@@ -114,8 +115,8 @@ function parseResponse<T extends z.ZodType>(
   const result = schema.safeParse(value);
   if (result.success) return result.data;
   const issue = result.error.issues[0];
-  if (issue.path[0] === "includePaths")
-    throw new Error("deepScan.includePaths must be an array of paths.");
+  if (issue.path[0] === "includePaths" || issue.path[0] === "filePaths")
+    throw new Error(`deepScan.${issue.path[0]} must be an array of paths.`);
   const path = [field, ...issue.path]
     .join(".")
     .replace(/workers\.\d+/g, "worker")

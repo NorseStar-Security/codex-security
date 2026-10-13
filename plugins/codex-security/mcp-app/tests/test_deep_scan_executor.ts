@@ -18,6 +18,7 @@ import {
   copyFile,
   mkdir,
   readFile,
+  readdir,
   realpath,
   stat,
   symlink,
@@ -62,7 +63,7 @@ const {
     "import.meta.url": JSON.stringify(executorSource.href),
   },
   stdin: {
-    // Test the environment snapshot without adding a production export.
+    // Expose the environment snapshot only for tests.
     contents: `${await readFile(executorSource, "utf8")}
 export { snapshotWorkerEnvironment, appendItemDiagnostic };
 export * from "./errors.js";
@@ -1794,6 +1795,7 @@ env_key = "SYNTHETIC_GATEWAY_KEY"`,
                 index % 2 === 0
                   ? ["api", `background jobs ${index}`]
                   : undefined,
+              filePaths: index % 2 === 0 ? [`background jobs ${index}`] : [],
               pythonCommand: `${helperPython}-${index} `,
             },
           }),
@@ -2081,10 +2083,14 @@ env_key = "SYNTHETIC_GATEWAY_KEY"`,
               servers["cs_artifacts"]!.env["CODEX_SECURITY_INCLUDE_PATHS_FILE"];
             if (index % 2 === 0) {
               assert.ok(scopeFile && path.isAbsolute(scopeFile));
-              assert.deepEqual(JSON.parse(await readFile(scopeFile, "utf8")), [
+              assert.deepEqual(invocation.scopeInput.paths, [
                 "api",
                 `background jobs ${index}`,
               ]);
+              assert.deepEqual(invocation.scopeInput.filePaths, [
+                `background jobs ${index}`,
+              ]);
+              await assert.rejects(readFile(scopeFile), { code: "ENOENT" });
             } else assert.equal(scopeFile, undefined);
             assert.equal(process.env.PYTHON, python);
             assert.equal(
@@ -2543,6 +2549,9 @@ async function testLargeScopeTransport() {
                 (_, row) =>
                   `scan-${index}/background jobs/café-${row}-${"a".repeat(110)}`,
               );
+              const filePaths = includePaths.filter(
+                (_, index) => index % 2 === 0,
+              );
               const run = parseDeepScan({
                 deepScan: {
                   scanId,
@@ -2550,6 +2559,7 @@ async function testLargeScopeTransport() {
                   targetPath: fixture.root,
                   scope: ".",
                   includePaths,
+                  filePaths,
                   scanDir: workerRoot,
                   config: {
                     workers: 1,
@@ -2569,6 +2579,7 @@ async function testLargeScopeTransport() {
                   scanId: run.scanId,
                   scope: run.scope,
                   includePaths: run.includePaths,
+                  filePaths: run.filePaths,
                 },
               });
               await executor.run(
@@ -2601,7 +2612,11 @@ async function testLargeScopeTransport() {
               );
               const invocation = await readJson(output, "invocation.json");
               assert.deepEqual(invocation.scopeInput.paths, includePaths);
+              assert.deepEqual(invocation.scopeInput.filePaths, filePaths);
               assert.equal(path.isAbsolute(invocation.scopeInput.file), true);
+              await assert.rejects(readFile(invocation.scopeInput.file), {
+                code: "ENOENT",
+              });
               assert.equal(invocation.argv.includes("resume"), resumed);
               const argument = nativeConfigOverrides(invocation.argv).find(
                 (value) => value.startsWith("mcp_servers="),
@@ -3517,12 +3532,11 @@ ${jsonLineInputSource(`      if (message.method === 'initialized') continue;
 } else {
 const stdin = (await process.stdin.toArray()).join('');
 let scopeInput;
-if (stdin.includes('CAPTURE_SCOPE_INPUT')) {
+{
   const { parse } = await import(${JSON.stringify(import.meta.resolve("smol-toml"))});
   const configuration = process.argv.flatMap((arg, index) => arg === '--config' || arg === '-c' ? [parse(process.argv[index + 1])] : []).findLast(value => value.mcp_servers?.cs_artifacts);
-  const environment = configuration.mcp_servers.cs_artifacts.env;
-  const file = environment.CODEX_SECURITY_INCLUDE_PATHS_FILE;
-  scopeInput = { file, paths: JSON.parse(file ? readFileSync(file, 'utf8') : environment.CODEX_SECURITY_INCLUDE_PATHS_JSON) };
+  const file = configuration?.mcp_servers.cs_artifacts.env.CODEX_SECURITY_INCLUDE_PATHS_FILE;
+  if (file) scopeInput = { file, ...JSON.parse(readFileSync(file, 'utf8')) };
 }
 
 const profileIndex = process.argv.indexOf('--profile');
@@ -3752,6 +3766,12 @@ async function testWorkerCancellation() {
     await mkdir(workingDirectory);
     const executor = new CodexSdkWorkerExecutor({
       parentSandbox: trustedParentSandbox,
+      artifactContext: {
+        pluginRoot: fixture.root,
+        repoRoot: fixture.root,
+        scanId: randomUUID(),
+        includePaths: ["api"],
+      },
     });
     const run = (controller: AbortController, onThreadStarted?: () => void) =>
       executor.run({
@@ -3761,6 +3781,7 @@ async function testWorkerCancellation() {
         subagents: 0,
         signal: controller.signal,
         onThreadStarted,
+        artifactContext: { root: workingDirectory, layout: "worker" },
       });
     const preAborted = new AbortController();
     const beforeStartup = new Error(
@@ -3772,6 +3793,10 @@ async function testWorkerCancellation() {
       (error: Error) => error === beforeStartup,
     );
     assert.equal(worker, undefined);
+    assert.equal(
+      (await readdir(fixture.root)).some((name) => name.startsWith("scope-")),
+      false,
+    );
     await assert.rejects(readFile(fixture.preflightMarkerPath), {
       code: "ENOENT",
     });
@@ -3826,6 +3851,10 @@ async function testWorkerCancellation() {
         assert(workerSignal);
         assert.equal(workerSignal.aborted, false);
       }
+      assert.equal(
+        (await readdir(fixture.root)).some((name) => name.startsWith("scope-")),
+        false,
+      );
       assert.notEqual(workerSignal, controller.signal);
       const currentWorker = worker as ChildProcess | undefined;
       assert(currentWorker);

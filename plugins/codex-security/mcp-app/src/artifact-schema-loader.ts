@@ -108,13 +108,50 @@ export function loadArtifactZodSchema(
   documentId: string,
   definition: string,
 ): z.ZodType {
-  return z.fromJSONSchema(
-    bundleArtifactSchema(
-      documents,
-      documentId,
-      definition,
-    ) as z.core.JSONSchema.JSONSchema,
-  );
+  const schema = bundleArtifactSchema(documents, documentId, definition);
+  const validator = z.fromJSONSchema(schema as z.core.JSONSchema.JSONSchema);
+  return validator.meta(modelFacingSchema(schema));
+}
+
+/** Keep forbidden fields out of native tool declarations without allowing them. */
+function modelFacingSchema(schema: ArtifactSchemaObject): ArtifactSchemaObject {
+  function visit(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(visit);
+    if (!value || typeof value !== "object") return value;
+    const object = Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [
+        key,
+        ["const", "enum", "default", "examples"].includes(key)
+          ? child
+          : visit(child),
+      ]),
+    );
+    const properties = object.properties;
+    if (
+      !properties ||
+      typeof properties !== "object" ||
+      Array.isArray(properties)
+    )
+      return object;
+    const forbidden = Object.entries(properties)
+      .filter(([, property]) => property === false)
+      .map(([name]) => name);
+    if (forbidden.length === 0) return object;
+
+    // Zod renders false properties as {not:{}}, which the native declaration
+    // projects as optional unknown fields. Exclude their names instead. This
+    // is equivalent JSON Schema; the original validator remains unchanged.
+    object.properties = Object.fromEntries(
+      Object.entries(properties).filter(([, property]) => property !== false),
+    );
+    const names = { not: { enum: forbidden } };
+    object.propertyNames =
+      object.propertyNames === undefined
+        ? names
+        : { allOf: [object.propertyNames, names] };
+    return object;
+  }
+  return visit(schema) as ArtifactSchemaObject;
 }
 
 function readSchemaPointer(document: SchemaDocument, pointer: string): unknown {
