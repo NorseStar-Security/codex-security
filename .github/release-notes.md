@@ -232,6 +232,8 @@
 - include native compaction usage ([#1590](https://github.com/openai/codex-security/pull/1590))
 - share persisted finding normalization ([#1574](https://github.com/openai/codex-security/pull/1574))
 - preserve Windows process launch behavior ([#1601](https://github.com/openai/codex-security/pull/1601))
+- preserve selected scope through recovery ([#1602](https://github.com/openai/codex-security/pull/1602))
+- finish saving cancellation before returning to callers ([#1260](https://github.com/openai/codex-security/pull/1260))
 
 <!-- release-section: highlights:end -->
 

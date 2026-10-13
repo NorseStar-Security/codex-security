@@ -1064,6 +1064,23 @@ export function createCodexSecurityServer(): McpServer {
       async () => {
         workspace = await runWorkbench(args);
       },
+      async () => {
+        const current = (await runWorkbench(["get-scan", "--scan-id", scanId]))[
+          "workspace"
+        ] as JsonObject;
+        const scan = current["results"];
+        const progress = isJsonObject(scan) ? scan["progress"] : undefined;
+        return {
+          status:
+            isJsonObject(progress) && typeof progress["status"] === "string"
+              ? progress["status"]
+              : undefined,
+          failureMessage:
+            isJsonObject(scan) && typeof scan["failureMessage"] === "string"
+              ? scan["failureMessage"]
+              : undefined,
+        };
+      },
     );
     if (workspace === undefined && canceledLocally) {
       workspace = (await runWorkbench(["get-scan", "--scan-id", scanId]))[
@@ -1547,7 +1564,10 @@ export function createCodexSecurityServer(): McpServer {
         `--message=${message}`,
         ...optionalArg("--claim-token", handoffClaimToken),
       ]);
-      deepScanCoordinators.get(scanId)?.failExternallyPersisted(message);
+      const scan = failed["scan"];
+      const progress = isJsonObject(scan) ? scan["progress"] : undefined;
+      if (isJsonObject(progress) && progress["status"] === "failed")
+        deepScanCoordinators.get(scanId)?.failExternallyPersisted(message);
       return scanActionResult(
         failed,
         "Recorded the Codex Security scan failure.",

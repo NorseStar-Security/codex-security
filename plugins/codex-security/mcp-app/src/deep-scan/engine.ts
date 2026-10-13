@@ -41,6 +41,7 @@ export function startDeepScanEngine(options: {
           scanId: run.scanId,
           scope: run.scope,
           includePaths: run.includePaths,
+          filePaths: run.filePaths,
           pythonCommand: options.pythonCommand,
         },
       }),

@@ -194,6 +194,7 @@ export async function recordCodexSecurityScanDraftViaWorkbench(
         ? findingsWithinScope(
             reconciled.findings,
             scope.includePaths as string[],
+            trustedScope.filePaths as string[] | undefined,
           )
         : reconciled.findings;
     const findings = buildFindings(scopedFindings, context.mode);
@@ -311,11 +312,19 @@ export async function recordCodexSecurityWorkerScanDraft(
   const includePaths = context.includePaths ?? [context.scope || "."];
   let scoped = {
     ...parsed,
-    findings: findingsWithinScope(parsed.findings, includePaths),
+    findings: findingsWithinScope(
+      parsed.findings,
+      includePaths,
+      context.filePaths,
+    ),
   };
   scoped = (await preserveScanDraft(context, scoped)).input;
   // Older checkpoints predate the coordinator's requested-path binding.
-  scoped.findings = findingsWithinScope(scoped.findings, includePaths);
+  scoped.findings = findingsWithinScope(
+    scoped.findings,
+    includePaths,
+    context.filePaths,
+  );
   const destination = await artifactDestination(
     context,
     ["result.json"],
@@ -342,13 +351,26 @@ export async function recordCodexSecurityWorkerScanDraft(
 export function findingsWithinScope(
   findings: JsonObject[],
   includePaths: readonly string[],
+  filePaths: readonly string[] = [],
 ): JsonObject[] {
-  if (includePaths.includes(".")) return findings;
+  const scopes = includePaths.map((scope) =>
+    posix.normalize(scope).replace(/\/$/u, ""),
+  );
+  if (scopes.includes(".")) return findings;
+  const files = new Set(
+    filePaths.map((path) => posix.normalize(path).replace(/\/$/u, "")),
+  );
+  const targets = scopes.map((scope) => ({
+    path: scope,
+    isFile: files.has(scope),
+  }));
   return findings.filter((finding) =>
     (finding.locations as JsonObject[]).some((location) => {
-      const path = (location.path as string).replace(/^\.\//u, "");
-      return includePaths.some(
-        (scope) => path === scope || path.startsWith(`${scope}/`),
+      const path = posix.normalize(location.path as string);
+      return targets.some(
+        (scope) =>
+          path === scope.path ||
+          (!scope.isFile && path.startsWith(`${scope.path}/`)),
       );
     }),
   );

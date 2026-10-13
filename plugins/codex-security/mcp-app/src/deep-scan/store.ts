@@ -695,13 +695,14 @@ export function parseDeepScan(result: JsonObject): DeepScanRunState {
           ),
         }),
   };
-  const includePaths = value.includePaths;
-  if (
-    includePaths !== undefined &&
-    (!Array.isArray(includePaths) ||
-      includePaths.some((path) => typeof path !== "string"))
-  ) {
-    throw new Error("deepScan.includePaths must be an array of paths.");
+  for (const field of ["includePaths", "filePaths"] as const) {
+    const paths = value[field];
+    if (
+      paths !== undefined &&
+      (!Array.isArray(paths) || paths.some((path) => typeof path !== "string"))
+    ) {
+      throw new Error(`deepScan.${field} must be an array of paths.`);
+    }
   }
   return {
     scanId: requiredString(value.scanId, "deepScan.scanId"),
@@ -711,7 +712,8 @@ export function parseDeepScan(result: JsonObject): DeepScanRunState {
     updatedAt: optionalString(value.updatedAt),
     targetPath: requiredString(value.targetPath, "deepScan.targetPath"),
     scope: requiredString(value.scope, "deepScan.scope"),
-    includePaths,
+    includePaths: value.includePaths as string[] | undefined,
+    filePaths: value.filePaths as string[] | undefined,
     userContext: optionalString(value.userContext),
     scanDir: requiredString(value.scanDir, "deepScan.scanDir"),
     config,

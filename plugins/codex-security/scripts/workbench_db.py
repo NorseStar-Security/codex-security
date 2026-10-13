@@ -441,6 +441,20 @@ def requested_scan_paths(scan: sqlite3.Row) -> list[str]:
     return [scan["scope"]]
 
 
+def requested_scan_file_paths(scan: sqlite3.Row) -> list[str]:
+    # Older scans did not record path kinds. Retain their lexical scope semantics
+    # rather than infer the original target from a possibly changed checkout.
+    if scan["recipe_json"] is None:
+        return []
+    recipe = json.loads(scan["recipe_json"], parse_constant=reject_non_finite_json)
+    return recipe.get("scopeFilePaths", [])
+
+
+def requested_finding_scope(scan: sqlite3.Row) -> list[tuple[str, bool]]:
+    files = {PurePosixPath(path) for path in requested_scan_file_paths(scan)}
+    return [(path, PurePosixPath(path) in files) for path in requested_scan_paths(scan)]
+
+
 def scan_contract(scan: sqlite3.Row) -> dict[str, Any]:
     target = Path(scan["target_path"])
     target_contract = {
@@ -462,6 +476,7 @@ def scan_contract(scan: sqlite3.Row) -> dict[str, Any]:
         "scope": {
             "requiredExcludePaths": [],
             "requestedPath": scan["scope"],
+            "filePaths": requested_scan_file_paths(scan),
             **(
                 {"requiredIncludePaths": requested_scan_paths(scan)}
                 if scan["mode"] != "diff"
@@ -1539,7 +1554,7 @@ def complete_scan_locked(
                 completion_binding=completion_binding,
                 completion_warnings=warnings if scan["mode"] != "deep" else None,
                 draft_documents=draft_documents,
-                finding_scope=requested_scan_paths(scan) if scan["mode"] == "deep" else None,
+                finding_scope=requested_finding_scope(scan) if scan["mode"] == "deep" else None,
             )
         add_warning()
         wrote = True
@@ -1682,6 +1697,10 @@ def register_cli_scan(
     recipe = parse_scan_recipe(recipe_json, repository)
     requested_target = recipe["target"]
     paths = requested_target["paths"]
+    # Capture host-observed kinds once; resumes and publication use the saved recipe.
+    recipe.pop("scopeFilePaths", None)
+    if file_paths := [path for path in paths if (repository / path).is_file()]:
+        recipe["scopeFilePaths"] = file_paths
     scope = paths[0] if len(paths) == 1 else "."
     diff_target = None
     if requested_target["kind"] in {"refs", "working_tree"}:
