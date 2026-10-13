@@ -1876,6 +1876,8 @@ def fail_deep_scan_locked(
                     kind="file",
                 )
             )
+        elif run["manifest_path"] == str(Path(scan["scan_dir"]) / "scan-manifest.json"):
+            manifest_path = run["manifest_path"]
         if run["status"] in {"failed", "interrupted"} or scan["status"] == "failed":
             if (
                 run["status"] == args.deep_status

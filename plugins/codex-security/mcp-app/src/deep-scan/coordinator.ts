@@ -14,6 +14,7 @@ import {
 } from "./artifact-validation.js";
 import {
   scanDraftInputSchema,
+  type DeepScanPublication,
   findingsWithinScope,
   type ScanDraftInput,
 } from "../artifact-scan-draft.js";
@@ -57,6 +58,7 @@ interface SchedulerResult {
   reason: DeepScanTerminalReason;
   omittedWorkerIds: string[];
   result?: DeepReductionInput;
+  resultPath?: string;
 }
 
 export interface CoordinatorOptions {
@@ -76,7 +78,11 @@ export interface CoordinatorOptions {
     run: DeepScanRunState,
     signal: AbortSignal,
   ) => Promise<DeepScanRunState>;
-  onComplete?: (draft: ScanDraftInput, signal: AbortSignal) => Promise<void>;
+  onComplete?: (
+    draft: ScanDraftInput,
+    signal: AbortSignal,
+    publication: DeepScanPublication,
+  ) => Promise<void>;
   onStopped?: (run: DeepScanRunState) => Promise<void>;
 }
 
@@ -316,6 +322,10 @@ export class DeepScanCoordinator {
       await this.options.onComplete?.(
         draft,
         this.publicationAbortController.signal,
+        {
+          coordinatorGeneration: this.state.coordinatorGeneration,
+          resultPath: schedulerResult.resultPath ?? null,
+        },
       );
       if (this.canceled || this.externallyFailed) return;
       const completed = await this.options.store.finish({
@@ -968,6 +978,7 @@ export class DeepScanCoordinator {
       reason: stopReason,
       omittedWorkerIds: [...new Set(omittedWorkerIds)],
       result: latestResult,
+      resultPath: previousReducerResultPath,
     };
   }
 

@@ -221,6 +221,8 @@
 - mark source review complete before custom validation ([#1252](https://github.com/openai/codex-security/pull/1252))
 - preserve Git checkout formats and raw POSIX inventory paths ([#1288](https://github.com/openai/codex-security/pull/1288))
 - inspect unpacked files for internal references ([#618](https://github.com/openai/codex-security/pull/618))
+- retain fragmented input and final scan activity ([#1284](https://github.com/openai/codex-security/pull/1284))
+- prevent replaced coordinators from overwriting scan results ([#916](https://github.com/openai/codex-security/pull/916))
 
 <!-- release-section: highlights:end -->
 
