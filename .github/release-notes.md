@@ -242,6 +242,7 @@
 - reuse runtime message and result handling ([#1583](https://github.com/openai/codex-security/pull/1583))
 - resolve workflows through readable plugin paths ([#1592](https://github.com/openai/codex-security/pull/1592))
 - share command argument encoding ([#1577](https://github.com/openai/codex-security/pull/1577))
+- simplify plugin tests and validation example ([#1621](https://github.com/openai/codex-security/pull/1621))
 
 <!-- release-section: highlights:end -->
 
