@@ -2553,3 +2553,65 @@ test("saved GitHub JSONL and gzip preserve evidence while malformed UTF-8 cannot
   await writeFile(f.file, Buffer.from([0xff]));
   await expect(readGitHubFindings(f.file)).rejects.toThrow("UTF-8");
 });
+
+test("normalized publication omits only new null fields to match canonical Cloud readback", async () => {
+  const f = await fixture();
+  const evidence = {
+    title: "Synthetic advisory without known package range",
+    severity: "unknown" as const,
+    packages: [
+      {
+        name: "example-package",
+        vulnerable_version_range: null,
+        installed_version: null,
+      },
+    ],
+    details: {
+      kind: "advisory" as const,
+      repository: null,
+      advisory: { source: "global" as const },
+    },
+  };
+  const prepared = await prepareNormalizedExternalPublication(
+    {
+      read: 1,
+      findings: [{ source_finding_id: "synthetic-global-advisory", evidence }],
+      excluded: [],
+    },
+    { ...options, provider: "github" },
+    f.deps,
+  );
+  const sent = prepared.preview.findings[0]!.evidence;
+  expect(sent.packages![0]).not.toHaveProperty("vulnerable_version_range");
+  expect(sent.packages![0]!.installed_version).toBeNull();
+  expect(sent.details).not.toHaveProperty("repository");
+  expect(evidence.details.repository).toBeNull();
+  expect((await prepared.publish()).verified).toBe(1);
+
+  await writeFile(
+    f.file,
+    JSON.stringify([
+      {
+        source_finding_id: "synthetic-sast",
+        evidence: {
+          title: "Synthetic SAST evidence",
+          severity: "high",
+          packages: [
+            { name: "example-package", vulnerable_version_range: null },
+          ],
+          details: {
+            kind: "sast",
+            repository: { url: "https://github.com/example/project" },
+            advisory: null,
+          },
+        },
+      },
+    ]),
+  );
+  const wiz = await prepareExternalPublication(f.file, options, f.deps);
+  expect(wiz.preview.findings[0]!.evidence.details).not.toHaveProperty(
+    "advisory",
+  );
+  expect(wiz.preview.findings[0]!.evidence.details!.scanner_origin).toBeNull();
+  expect((await wiz.publish()).verified).toBe(1);
+});

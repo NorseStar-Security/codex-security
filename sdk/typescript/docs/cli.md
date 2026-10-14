@@ -1689,9 +1689,10 @@ token filters.
 Use a stable source key for the GitHub host, repository and finding family.
 Code-scanning identities also include the selected ref, so an import from another
 branch cannot replace an existing branch's evidence. GitHub's source state and
-full original alert stay attached to the source report; dismissal or a fixed
-state does not create a Codex assessment. Alerts without a security severity are
-reported as `unknown`; SARIF error/warning/note levels are not vulnerability ratings.
+full original alert stay attached to the source report. An alert-wide dismissal
+applies to every branch; otherwise the selected instance supplies the open/fixed
+state. Dismissal or a fixed state does not create a Codex assessment. Alerts without
+a security severity are reported as `unknown`; SARIF error/warning/note levels are not vulnerability ratings.
 
 The SDK offers the same preview and publication boundary:
 

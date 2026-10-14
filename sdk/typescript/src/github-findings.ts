@@ -118,7 +118,11 @@ function codeScanningFinding(record: Record<string, unknown>): ExternalFinding {
           url: `${parsedUrl.origin}/${repository}`,
           name: repository,
         },
-        source_status: text(instance?.["state"]) ?? text(alert["state"]),
+        // Dismissal covers every branch; detection state belongs to the selected ref.
+        source_status:
+          alert["state"] === "dismissed"
+            ? "dismissed"
+            : (text(instance?.["state"]) ?? text(alert["state"])),
         scanner_origin: text(tool?.["name"]),
         rule: { id: text(rule?.["id"]), name: text(rule?.["name"]) },
         weakness_ids: weaknessIds,
@@ -149,13 +153,17 @@ function advisoryFinding(record: Record<string, unknown>): ExternalFinding {
   if (!url || url !== advisory["html_url"])
     throw new Error("GitHub advisory URL must match the original advisory.");
   const parsedUrl = new URL(url);
-  const host = text(record["githubHost"]);
+  const host = text(record["githubHost"])?.toLowerCase();
+  // Enterprise APIs may return the public advisory database's canonical link.
+  const canonicalGlobalLink =
+    selection === "global" && parsedUrl.host === "github.com";
   const expectedPath =
     selection === "repository"
       ? `/${repository}/security/advisories/${id}`
       : `/advisories/${id}`;
   if (
-    parsedUrl.host.toLowerCase() !== host?.toLowerCase() ||
+    !host ||
+    (parsedUrl.host.toLowerCase() !== host && !canonicalGlobalLink) ||
     parsedUrl.pathname.toLowerCase() !== expectedPath.toLowerCase()
   )
     throw new Error(
@@ -199,7 +207,7 @@ function advisoryFinding(record: Record<string, unknown>): ExternalFinding {
   });
   const cwes = Array.isArray(advisory["cwes"]) ? advisory["cwes"] : [];
   return {
-    source_finding_id: `${parsedUrl.host.toLowerCase()}/${selection === "repository" ? repository.toLowerCase() : "global"}/security-advisory/${id.toUpperCase()}`,
+    source_finding_id: `${host}/${selection === "repository" ? repository.toLowerCase() : "global"}/security-advisory/${id.toUpperCase()}`,
     evidence: validateExternalEvidence({
       title: text(advisory["summary"]) ?? id,
       severity: severity(advisory["severity"]),

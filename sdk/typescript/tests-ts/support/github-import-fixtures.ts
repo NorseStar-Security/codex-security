@@ -13,9 +13,9 @@ export function importedAlert(
     alert: {
       number: 12,
       html_url: url,
-      state: "dismissed",
-      dismissed_reason: "false positive",
-      dismissed_comment: "Synthetic earlier review.",
+      state: "open",
+      dismissed_reason: null,
+      dismissed_comment: null,
       updated_at: "2026-01-02T00:00:00Z",
       rule: {
         id: "synthetic/sql-query",

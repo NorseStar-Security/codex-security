@@ -211,3 +211,37 @@ test.each([
     ).toThrow();
   },
 );
+
+test("global advisories accept canonical public links from an Enterprise API without changing source host identity", () => {
+  const imported = importedAdvisory("global");
+  imported.githubHost = "git.example.test";
+  const result = normalizeGitHubAdvisories([imported]);
+  expect(result.excluded).toEqual([]);
+  expect(result.findings[0]!.source_finding_id).toStartWith(
+    "git.example.test/global/security-advisory/",
+  );
+  expect(result.findings[0]!.evidence.url).toBe(imported.url);
+  expect(result.findings[0]!.evidence.source_data as unknown).toEqual(imported);
+  expect(result.findings[0]!.evidence.details).not.toHaveProperty("repository");
+  const wrongRepositoryHost = importedAdvisory("repository");
+  wrongRepositoryHost.githubHost = "git.example.test";
+  expect(
+    normalizeGitHubAdvisories([wrongRepositoryHost]).excluded,
+  ).toHaveLength(1);
+});
+
+test("repository-wide dismissal takes precedence over detection state while selected refs keep their own open/fixed state", () => {
+  const imported = importedAlert("refs/heads/review");
+  imported.alert.state = "dismissed";
+  imported.alert.dismissed_reason = "false positive";
+  expect(
+    normalizeGitHubCodeScanningAlerts([imported]).findings[0]!.evidence.details!
+      .source_status,
+  ).toBe("dismissed");
+  imported.alert.state = "fixed";
+  imported.alert.dismissed_reason = null;
+  expect(
+    normalizeGitHubCodeScanningAlerts([imported]).findings[0]!.evidence.details!
+      .source_status,
+  ).toBe("open");
+});

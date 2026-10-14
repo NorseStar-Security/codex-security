@@ -123,13 +123,29 @@ function materializeDetailDefaults(
 function normalizeEvidenceDetails(value: unknown): void {
   if (value !== null && typeof value === "object") {
     const fields = value as Record<string, unknown>;
-    // Only this new wrapper is omitted for null; retain every legacy default.
+    // Cloud omits these new optional fields when null. Preserve every legacy
+    // default so saved Wiz requests still replay the same evidence bytes.
+    if (Array.isArray(fields["packages"]))
+      for (const value of fields["packages"]) {
+        if (
+          value &&
+          typeof value === "object" &&
+          value["vulnerable_version_range"] === null
+        )
+          delete value["vulnerable_version_range"];
+      }
     if (fields["details"] === null) delete fields["details"];
-    else
+    else {
+      const details = fields["details"];
+      if (details && typeof details === "object" && !Array.isArray(details))
+        for (const field of ["repository", "advisory"])
+          if ((details as Record<string, unknown>)[field] === null)
+            delete (details as Record<string, unknown>)[field];
       materializeDetailDefaults(
         fields["details"],
         modelSchemas["ImportedFindingEvidence"]!.properties!["details"]!,
       );
+    }
   }
 }
 
