@@ -263,6 +263,7 @@
 - prioritize CODEOWNERS in owner suggestions ([#1519](https://github.com/openai/codex-security/pull/1519))
 - rename display surfaces to Codex Security Local ([#1644](https://github.com/openai/codex-security/pull/1644))
 - update napi and napi-derive native dependencies ([#1646](https://github.com/openai/codex-security/pull/1646))
+- read saved Cloud findings in Codex ([#1422](https://github.com/openai/codex-security/pull/1422))
 
 <!-- release-section: highlights:end -->
 
