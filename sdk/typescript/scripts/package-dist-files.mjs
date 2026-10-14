@@ -12,6 +12,7 @@ const distModules = [
   "severity-store",
   "cloud-endpoint",
   "cloud-publish",
+  "external-findings",
   "external-findings-publish",
   "external-import-contract",
   "external-import-models",

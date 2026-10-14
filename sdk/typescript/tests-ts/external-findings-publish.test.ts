@@ -18,6 +18,7 @@ import { afterEach, expect, spyOn, test } from "bun:test";
 import {
   ExternalPublicationError,
   prepareExternalPublication,
+  prepareNormalizedExternalPublication,
   type ExternalPublicationProgress,
 } from "../src/external-findings-publish.js";
 import { readVendorFindings } from "../src/wiz-findings.js";
@@ -2384,4 +2385,32 @@ test("human previews stay compact while JSON previews retain complete evidence",
     JSON.parse(json.stdout.text()).findings[5].evidence.source_data.detail,
   ).toBe("complete-vendor-evidence-5");
   expect(f.posts).toHaveLength(0);
+});
+
+test("normalized SDK publication preserves caller evidence and exclusion accounting", async () => {
+  const f = await fixture();
+  const input = {
+    read: 2,
+    findings: [normalized()],
+    excluded: [
+      {
+        position: 2,
+        source_finding_id: null,
+        reason: "Unsupported source record.",
+      },
+    ],
+  };
+  const original = structuredClone(input);
+  const prepared = await prepareNormalizedExternalPublication(
+    input as Parameters<typeof prepareNormalizedExternalPublication>[0],
+    options,
+    f.deps,
+  );
+  expect(input).toEqual(original);
+  expect(prepared.preview.read).toBe(2);
+  const result = await prepared.publish();
+  expect(result.status).toBe("partial");
+  expect(result.counts.created).toBe(1);
+  expect(result.excluded).toEqual(input.excluded);
+  expect(result.verified).toBe(1);
 });
