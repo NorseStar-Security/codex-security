@@ -52,7 +52,7 @@ export interface ExternalPublicationOptions {
   sourceKey: string;
 }
 
-/** @internal Injectable transport and account for offline integration tests. */
+/** Optional transport, account, cancellation, and progress hooks. */
 export interface ExternalPublicationDependencies {
   environment?: NodeJS.ProcessEnv;
   fetch?: (url: string, options: RequestInit) => Promise<Response>;
