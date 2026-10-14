@@ -246,6 +246,7 @@
 - correct GitLab patch publication ([#817](https://github.com/openai/codex-security/pull/817))
 - stop --format yaml from cutting off error messages ([#1613](https://github.com/openai/codex-security/pull/1613))
 - stop Deep Scan from starting extra reviews during result checks ([#1630](https://github.com/openai/codex-security/pull/1630))
+- Python cache files break plugin integrity checks ([#1625](https://github.com/openai/codex-security/pull/1625))
 
 <!-- release-section: highlights:end -->
 
