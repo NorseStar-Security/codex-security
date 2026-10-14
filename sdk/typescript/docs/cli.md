@@ -1155,7 +1155,7 @@ codex-security suggest-owners findings.json --source-root /path/to/repo --json >
 
 Input is a findings document or `{ "findings": [...] }`. The source root
 defaults to the current directory. The command reads committed `HEAD`, relevant
-source, blame, and history; it does not read uncommitted source or assign tickets.
+source, CODEOWNERS, blame, and history; it does not read uncommitted source or assign tickets.
 Finding location paths are relative to the Git worktree root, including when
 `--source-root` points to a subdirectory. A location for `src/handler.ts` keeps
 that prefix; a location of `handler.ts` refers to the root file. Rebase imported
@@ -1165,10 +1165,34 @@ owners.
 Linked worktrees and bound separate Git directories are supported; borrowed
 external object stores such as `git clone --shared` are rejected.
 
+CODEOWNERS declarations take priority over Git history, following
+[GitHub's CODEOWNERS rules](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners).
+The last matching rule wins, and the command returns its first declared owner.
+Git history is the fallback when no declared owner applies.
+
 Results preserve IDs and report `identified`, `abstained`, or `error`. Identified
-owners include an observed Git name/email, reason, and checked citations.
+owners include a declared GitHub user, team, or email, or an observed Git
+name/email, with a reason and checked citations.
 Git identities do not establish current employment or tracker accounts; match
 accounts before assigning. Use a checkout matching the findings.
+
+An owner can be a Git name/email identity, a GitHub user or team handle,
+an email-only identity, or `null`. Example JSON excerpt:
+
+```json
+{
+  "schemaVersion": 2,
+  "results": [
+    {
+      "owner": {
+        "kind": "group",
+        "provider": "github",
+        "handle": "example/maintainers"
+      }
+    }
+  ]
+}
+```
 
 The command uses scan-default model/effort; override with `--model` and `--effort`.
 The model receives collected evidence with tools/network disabled. Exit `0`
@@ -1181,6 +1205,10 @@ import { suggestOwners } from "@openai/codex-security";
 const owners = await suggestOwners("/path/to/repo", result.findings.findings, {
   reasoningEffort: "high",
 });
+for (const { owner } of owners.results) {
+  if (owner === null) continue;
+  console.log("handle" in owner ? owner.handle : owner.email);
+}
 ```
 
 SDK inputs can include `sourceRevision`. If it differs from `HEAD`, the collector

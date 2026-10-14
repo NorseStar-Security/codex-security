@@ -260,6 +260,7 @@
 - update Docker-in-Docker and Node devcontainer features ([#1530](https://github.com/openai/codex-security/pull/1530))
 - bump the third-party group across 2 directories with 2 updates ([#1652](https://github.com/openai/codex-security/pull/1652))
 - open read-only SQLite databases from Windows UNC paths ([#1648](https://github.com/openai/codex-security/pull/1648))
+- prioritize CODEOWNERS in owner suggestions ([#1519](https://github.com/openai/codex-security/pull/1519))
 
 <!-- release-section: highlights:end -->
 
@@ -275,5 +276,6 @@ Review migration steps for these breaking changes:
 - move severity persistence to Node ([#1543](https://github.com/openai/codex-security/pull/1543))
 - preserve original knowledge context when resuming ([#1556](https://github.com/openai/codex-security/pull/1556))
 - simplify scan outcomes ([#1633](https://github.com/openai/codex-security/pull/1633))
+- prioritize CODEOWNERS in owner suggestions ([#1519](https://github.com/openai/codex-security/pull/1519))
 
 <!-- release-section: upgrades:end -->

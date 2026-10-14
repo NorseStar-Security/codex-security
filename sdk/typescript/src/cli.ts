@@ -3813,7 +3813,7 @@ export async function main(
     .command(findingFeedback)
     .command(publication)
     .command("suggest-owners", {
-      description: "Suggest finding owners from source and Git history.",
+      description: "Suggest finding owners from CODEOWNERS and Git history.",
       destructive: false,
       mcp: false,
       args: z.object({

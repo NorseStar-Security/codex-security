@@ -8,6 +8,7 @@ const distModules = [
   "cli-scan-logs-json",
   "cli-signals",
   "classify-severity",
+  "codeowners",
   "classify-scan-severity",
   "severity-store",
   "cloud-publish",
