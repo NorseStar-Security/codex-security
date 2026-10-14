@@ -208,11 +208,7 @@ def test_publication_renders_each_source_remediation(
     sources = [first, second, third, fourth]
     finding["remediation"] = first["remediation"]
     finding["remediationTests"] = first["remediationTests"]
-    if mode == "standard":
-        # Standard completion itself consolidates these duplicate logical findings.
-        scan.findings[:] = sources
-        finding = first
-    elif mode == "deep-nested":
+    if mode == "deep-nested":
         nested = copy.deepcopy(second)
         nested["provenance"]["previousFindings"] = [third]
         nested["provenance"]["sourceFindings"] = [{"id": "review-4:0", "finding": fourth}]
@@ -236,23 +232,7 @@ def test_publication_renders_each_source_remediation(
     completed = complete(workbench_api, workbench_db, scan)
 
     assert completed["progress"]["status"] == "complete"
-    if mode == "standard":
-        published = json.loads((scan.scan_dir / "findings.json").read_text())["findings"]
-        assert len(published) == 1
-        canonical = published[0]
-        assert "sourceFindings" not in canonical["provenance"]
-        retained = [canonical, *canonical["provenance"].pop("previousFindings")]
-        for source in retained:
-            for field in ("findingId", "occurrenceId", "fingerprints"):
-                value = source.pop(field)
-                assert value
-        assert retained == sources
-        coverage = json.loads((scan.scan_dir / "coverage.json").read_text())
-        for field in ("documentType", "schemaVersion", "scanId"):
-            coverage.pop(field)
-        assert coverage == scan.coverage
-    else:
-        assert_published_aggregate(scan)
+    assert_published_aggregate(scan)
     report = (scan.scan_dir / "report.md").read_text()
     if linked_writeup:
         assert "findings/archive/archive.md" in report
@@ -274,7 +254,6 @@ def test_deep_publication_keeps_configured_scope_without_worker_observations(
     scan = publication_scan(scope=scope)
     result = add_worker(workbench_db, scan)
     worker_coverage = {
-        "completeness": "partial",
         "surfaces": [
             {
                 "id": "worker-surface",
@@ -322,7 +301,7 @@ def test_deep_publication_ignores_empty_canceled_checkpoint(
     result = add_worker(workbench_db, scan, status="canceled")
     checkpoint = write_checkpoint(
         result.parent / "checkpoints",
-        saved_draft(scan.scan_id, completeness="partial"),
+        saved_draft(scan.scan_id),
     )
     source_bytes = checkpoint.read_bytes()
 
@@ -471,11 +450,11 @@ def test_missing_deep_writeup_does_not_enable_general_recovery(
     if invalid == "finding":
         scan.findings[0]["severity"]["level"] = "invalid"
     else:
-        scan.coverage["completeness"] = "invalid"
+        scan.coverage["surfaces"] = "invalid"
     (scan.scan_dir / "findings.json").write_text(json.dumps({"findings": scan.findings}))
     (scan.scan_dir / "coverage.json").write_text(json.dumps(scan.coverage))
 
-    with pytest.raises(SystemExit, match="severity|completeness"):
+    with pytest.raises(SystemExit, match="severity|surfaces"):
         complete(workbench_api, workbench_db, scan)
     assert (
         workbench_db.execute("SELECT status FROM scans WHERE id = ?", (scan.scan_id,)).fetchone()[0]
@@ -531,7 +510,7 @@ def test_stopped_deep_scan_still_salvages_saved_findings(
         "findings": [later_finding],
     }
     if source == "standard-worker-checkpoint":
-        saved["coverage"] = saved_coverage(completeness="partial")
+        saved["coverage"] = saved_coverage()
     if source == "deep-reducer-result":
         checkpoint = None
         result.write_text(json.dumps(saved))
@@ -555,9 +534,8 @@ def test_stopped_deep_scan_still_salvages_saved_findings(
 
     assert stopped["progress"]["status"] == "failed"
     manifest = json.loads((scan.scan_dir / "scan-manifest.json").read_text())
-    coverage = json.loads((scan.scan_dir / "coverage.json").read_text())
     assert manifest["scan"]["status"] == "failed"
-    assert coverage["completeness"] == "partial"
+
     findings = json.loads((scan.scan_dir / "findings.json").read_text())["findings"]
     expected_summaries = {later_finding["summary"]}
     if has_parent:
@@ -642,11 +620,10 @@ def test_stopped_deep_scan_ignores_non_reducer_sources_without_coverage(
     assert source_path.read_bytes() == source_bytes
 
 
-def test_standard_publication_preserves_deliberately_partial_coverage(
+def test_standard_publication_preserves_deferred_work(
     workbench_api, workbench_db, publication_scan
 ):
     scan = publication_scan(mode="standard")
-    scan.coverage["completeness"] = "partial"
     scan.coverage["deferred"] = [{"id": "remaining-review", "reason": "Another surface remains."}]
     (scan.scan_dir / "coverage.json").write_text(json.dumps(scan.coverage))
 
@@ -892,3 +869,21 @@ def test_stopped_deep_projection_filters_the_canonical_parent(
     assert stopped["progress"]["status"] == "failed"
     assert stopped["findingCount"] == 0
     assert json.loads((scan.scan_dir / "findings.json").read_text())["findings"] == []
+
+
+def test_already_sealed_legacy_capped_scan_remains_immutable(
+    workbench_api, workbench_db, publication_scan
+):
+    scan = publication_scan()
+    complete(workbench_api, workbench_db, scan)
+    names = ("scan-manifest.json", "findings.json", "coverage.json")
+    sealed = {name: (scan.scan_dir / name).read_bytes() for name in names}
+    add_worker(workbench_db, scan, status="failed")
+    with workbench_db:
+        workbench_db.execute(
+            "UPDATE deep_scan_runs SET terminal_reason = 'capped' WHERE scan_id = ?",
+            (scan.scan_id,),
+        )
+    repeated = complete(workbench_api, workbench_db, scan)
+    assert repeated["progress"]["status"] == "complete"
+    assert {name: (scan.scan_dir / name).read_bytes() for name in names} == sealed

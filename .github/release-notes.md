@@ -253,6 +253,7 @@
 - show why configuration files fail to load ([#1634](https://github.com/openai/codex-security/pull/1634))
 - prevent generated finding IDs from breaking later draft updates ([#1636](https://github.com/openai/codex-security/pull/1636))
 - generate patches without managing a CLI process ([#1635](https://github.com/openai/codex-security/pull/1635))
+- simplify scan outcomes ([#1633](https://github.com/openai/codex-security/pull/1633))
 
 <!-- release-section: highlights:end -->
 
@@ -267,5 +268,6 @@ Review migration steps for these breaking changes:
 - remove legacy message and plugin compatibility ([#1548](https://github.com/openai/codex-security/pull/1548))
 - move severity persistence to Node ([#1543](https://github.com/openai/codex-security/pull/1543))
 - preserve original knowledge context when resuming ([#1556](https://github.com/openai/codex-security/pull/1556))
+- simplify scan outcomes ([#1633](https://github.com/openai/codex-security/pull/1633))
 
 <!-- release-section: upgrades:end -->

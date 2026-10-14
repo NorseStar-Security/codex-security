@@ -41,7 +41,6 @@ import { isRecord } from "./record.js";
 import {
   createProfileCodex,
   createProviderProfile,
-  legacyWorkerUsesScanProvider,
   providerPreflightCommand,
   type ProviderProfile,
 } from "./provider-profile.js";
@@ -94,7 +93,7 @@ import {
   type DeepScanProgress,
 } from "./deep-progress.js";
 import { findScanSession } from "./scan-logs.js";
-import { runDeepScan, supportsDirectDeepScan } from "./deep-scan.js";
+import { runDeepScan } from "./deep-scan.js";
 import {
   deepScanOptions,
   resolveDeepScanConfig,
@@ -300,7 +299,6 @@ interface PreparedSession {
   authentication: ScanAuthentication;
   approvalPolicy: "never" | "on-request";
   python: string;
-  releaseCredentialHome: (() => Promise<void>) | null;
 }
 
 const DEEP_SCAN_CONFIG_PATH_ENVIRONMENT =
@@ -618,7 +616,7 @@ interface ClientDependencies {
   runWorkbench?: typeof runWorkbench;
   matchFindings?: typeof matchScanFindingsInternal;
   runDeepScan?: typeof runDeepScan;
-  supportsDirectDeepScan?: typeof supportsDirectDeepScan;
+  canRunDirectDeepScan?: () => boolean;
 }
 
 const DEFAULT_DEPENDENCIES: ClientDependencies = {
@@ -1515,8 +1513,6 @@ export class CodexSecurity {
     let knowledgeBase: PreparedKnowledgeBase | null = null;
     let costTracker: ScanCostTracker | null = null;
     let deepProgressTracker: DeepScanProgressTracker | null = null;
-    let releaseCredentialHome: (() => Promise<void>) | null = null;
-    let scanFailure = false;
     let artifactRestorationFailure: OutputDirectoryError | null = null;
     let customValidationComplete = false;
     let completionCost: ScanCost | null = null;
@@ -1624,7 +1620,6 @@ export class CodexSecurity {
         approvalPolicy,
         python,
       } = session;
-      releaseCredentialHome = session.releaseCredentialHome;
       let git: InspectedExecutable = {
         executable: null,
         environment: selectedScanEnvironment(
@@ -1691,25 +1686,6 @@ export class CodexSecurity {
                 session.apiKey,
             }),
       };
-      if (
-        mode === "deep" &&
-        modelProvider === "openai" &&
-        !(await pluginForwardsWorkerProviderSelection(
-          runtime,
-          preflightConfig,
-        )) &&
-        !(await legacyWorkerUsesScanProvider(
-          this.#codexCommand(),
-          definedEnvironment(workerProviderEnvironment),
-          scanDir,
-          modelProvider,
-          signal,
-        ))
-      ) {
-        throw new CodexSecurityError(
-          "This custom plugin cannot forward the scan's selected provider to Deep Scan workers. Update the custom plugin or use the bundled plugin.",
-        );
-      }
       const { environment: workerEnvironment, ...workerRuntimeConfig } =
         selectedWorkerRuntimeConfig(
           effectiveConfig,
@@ -1739,10 +1715,9 @@ export class CodexSecurity {
       }
       if (deepScanConfiguration !== undefined) {
         await writeDeepScanConfig(
-          runtime.deepScanConfigPath ??
-            join(runtimeHome, "codex-security", "config.toml"),
+          runtime.deepScanConfigPath!,
           deepScanConfiguration,
-          runtime.deepScanConfigPath === undefined ? undefined : workerSnapshot,
+          workerSnapshot,
         );
       }
       checkOpen();
@@ -1775,9 +1750,8 @@ export class CodexSecurity {
           authentication.method === "api_key" ||
           (authentication.method === "stored_credentials" &&
             authentication.credentialType === "api_key")) &&
-        (await (
-          this.#dependencies.supportsDirectDeepScan ?? supportsDirectDeepScan
-        )(runtime.plugin.pluginRoot));
+        (this.#dependencies.canRunDirectDeepScan?.() ??
+          !process.versions["bun"]);
       const discoveryPrompt =
         options.validationPrompt === undefined
           ? undefined
@@ -2728,9 +2702,6 @@ export class CodexSecurity {
       }
       return result;
     } catch (error) {
-      // Recorded first: everything below can throw a different error for this same failed
-      // scan, and cleanup must treat all of those as a failure it is not allowed to mask.
-      scanFailure = true;
       const snapshot = await costTracker?.stop().catch(() => null);
       if (artifactRestorationFailure !== null) throw artifactRestorationFailure;
       let failure =
@@ -2788,11 +2759,6 @@ export class CodexSecurity {
             budgetRecovery.pythonPath,
             budgetRecovery.protectedRoot,
           );
-          if (result.coverage.completeness !== "partial") {
-            throw new IncompleteScanError(
-              "Budget-exhausted scan recovery did not report partial coverage.",
-            );
-          }
           const completedScan = completion["scan"];
           const targetWarnings = new Set(
             Array.isArray(completion["targetWarnings"])
@@ -2817,7 +2783,6 @@ export class CodexSecurity {
                 : undefined,
             );
           }
-          scanFailure = false;
           return result;
         } catch {}
       }
@@ -2870,11 +2835,7 @@ export class CodexSecurity {
     } finally {
       budgetAbortController.abort();
       deepProgressTracker?.stop();
-      // Removing the temporary scan inputs is best effort. A throw here would replace the
-      // outcome the try and catch blocks already produced, so these failures are reported
-      // as warnings: a scan that failed has to say why it failed, not why its temporary
-      // files outlived it. The whole step is guarded so that a cleanup which rejects, or
-      // throws synchronously, still cannot skip a pending startup-lock release below.
+      // Temporary-input cleanup must not replace the scan's outcome.
       try {
         for (const cleanup of await Promise.allSettled([
           knowledgeBase?.cleanup(),
@@ -2886,15 +2847,6 @@ export class CodexSecurity {
         }
       } catch (error) {
         warnCleanupFailed(options, error);
-      } finally {
-        // Release any remaining startup lock, but preserve the scan's error if both
-        // the scan and lock cleanup fail.
-        try {
-          await releaseCredentialHome?.();
-        } catch (error) {
-          if (!scanFailure) throw error;
-          warnCleanupFailed(options, error);
-        }
       }
     }
   }
@@ -3307,6 +3259,7 @@ export class CodexSecurity {
         );
       }
       const runtime = this.#runtime;
+      if (deepScan) await requireCurrentDeepScanPlugin(runtime);
       const effectiveConfig = await scanSkillConfig(
         scanCyberAccessConfig(requestedConfig, options.cyberAccessProgram),
         runtime.plugin,
@@ -3316,20 +3269,6 @@ export class CodexSecurity {
       const preflightConfig = scanPreflightCodexConfig(effectiveConfig);
       const resolvedConfig = resolveCodexProfile(effectiveConfig);
       const providers = resolvedConfig["model_providers"];
-      if (
-        deepScan &&
-        ((typeof modelProvider === "string" && modelProvider !== "openai") ||
-          (isRecord(providers) && Object.keys(providers).length > 0) ||
-          resolvedConfig["openai_base_url"] !== undefined) &&
-        (runtime.deepScanConfigPath === undefined ||
-          !(await pluginSupportsWorkerProviderSnapshot(
-            runtime.plugin.pluginRoot,
-          )))
-      ) {
-        throw new CodexSecurityError(
-          "This custom plugin cannot forward per-scan provider settings to Deep Scan workers. Update the custom plugin or use the bundled plugin.",
-        );
-      }
       if (runtime.configPath !== undefined) {
         await writeCodexConfig(runtime.configPath, {
           ...preflightConfig,
@@ -3380,10 +3319,8 @@ export class CodexSecurity {
           ? "stored_credentials"
           : null;
       }
-      if (!deepScan || runtime.deepScanConfigPath !== undefined) {
-        await releaseCredentialHome?.();
-        releaseCredentialHome = null;
-      }
+      await releaseCredentialHome?.();
+      releaseCredentialHome = null;
       if (externalProvider === null && apiKey !== null) {
         this.#runtimeCredentialSource = "api_key";
       }
@@ -3452,7 +3389,6 @@ export class CodexSecurity {
         authentication,
         approvalPolicy,
         python,
-        releaseCredentialHome,
       };
     } catch (error) {
       try {
@@ -4465,7 +4401,7 @@ function scanPrompt(
     ...(skillName === "security-scan"
       ? [
           "This Standard scan authorizes its independent baseline auditor and focused investigators; use available subagent tools and continue with parent-agent fallback if capacity changes.",
-          "After architecture mapping yields a usable threatModel, call record_codex_security_scan_draft for this already registered scan with complete:false, findings:[], and truthful partial coverage, before continuing discovery. Preserve the model in later checkpoints as it changes. This checkpoint does not start or complete a scan; write final canonical files as instructed below.",
+          "After architecture mapping yields a usable threatModel, call record_codex_security_scan_draft for this already registered scan with complete:false, findings:[], and scope notes, before continuing discovery. Preserve the model in later checkpoints as it changes. This checkpoint does not start or complete a scan; write final canonical files as instructed below.",
         ]
       : skillName === "deep-security-scan"
         ? []
@@ -4703,6 +4639,11 @@ async function collectResult(
     workbenchValidated,
     signal,
   });
+  if (contract.manifest.scan.status !== "completed") {
+    throw new IncompleteScanError(
+      `Codex Security scan ${contract.manifest.scan.status}; available results remain at ${scanDir}.`,
+    );
+  }
   let sarifPath: string | null = null;
   try {
     sarifPath = await requireScanFile(
@@ -5286,43 +5227,28 @@ export function scanPreflightCodexConfig(config: JsonObject): JsonObject {
   return result;
 }
 
-async function pluginSupportsWorkerProviderSnapshot(
-  pluginRoot: string,
-): Promise<boolean> {
-  const manifest: unknown = JSON.parse(
-    await readFile(join(pluginRoot, ".codex-plugin", "plugin.json"), "utf8"),
-  );
-  return (
-    isRecord(manifest) &&
-    isRecord(manifest["codexSecurity"]) &&
-    manifest["codexSecurity"]["workerProviderSnapshot"] === 4
-  );
-}
-
-async function pluginForwardsWorkerProviderSelection(
+async function requireCurrentDeepScanPlugin(
   runtime: PreparedRuntime,
-  preflightConfig: JsonObject,
-): Promise<boolean> {
+): Promise<void> {
   const manifest: unknown = JSON.parse(
     await readFile(
       join(runtime.plugin.pluginRoot, ".codex-plugin", "plugin.json"),
       "utf8",
     ),
   );
-  const capability =
-    isRecord(manifest) && isRecord(manifest["codexSecurity"])
-      ? manifest["codexSecurity"]["workerProviderSnapshot"]
-      : undefined;
-  if (capability === true) {
-    return (
-      runtime.configPath !== undefined &&
-      resolveCodexProfile(preflightConfig)["model_provider"] === "openai"
+  const capabilities = isRecord(manifest)
+    ? manifest["codexSecurity"]
+    : undefined;
+  if (
+    runtime.deepScanConfigPath === undefined ||
+    !isRecord(capabilities) ||
+    capabilities["directDeepScanEngine"] !== 1 ||
+    capabilities["workerProviderSnapshot"] !== 4
+  ) {
+    throw new CodexSecurityError(
+      "Deep Scan requires the current plugin's direct engine and isolated worker runtime support. Update the custom plugin or use the bundled plugin.",
     );
   }
-  return (
-    runtime.deepScanConfigPath !== undefined &&
-    (capability === 2 || capability === 3 || capability === 4)
-  );
 }
 
 function selectedWorkerRuntimeConfig(
