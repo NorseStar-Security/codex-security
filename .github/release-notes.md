@@ -250,6 +250,8 @@
 - complete Deep scans with missing optional writeups ([#1624](https://github.com/openai/codex-security/pull/1624))
 - fix image pull failures and Windows diagnostic test ([#1641](https://github.com/openai/codex-security/pull/1641))
 - stop Deep Scan workers when usage is exhausted ([#1638](https://github.com/openai/codex-security/pull/1638))
+- show why configuration files fail to load ([#1634](https://github.com/openai/codex-security/pull/1634))
+- prevent generated finding IDs from breaking later draft updates ([#1636](https://github.com/openai/codex-security/pull/1636))
 
 <!-- release-section: highlights:end -->
 
