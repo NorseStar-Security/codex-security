@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test";
+import { Octokit } from "@octokit/core";
+import { importGitHubCodeScanningAlerts } from "../src/github.js";
+import { importGitHubAdvisories } from "../src/github-advisories.js";
 import { validateExternalEvidence } from "../src/external-import-contract.js";
 import {
   normalizeGitHubCodeScanningAlerts,
@@ -244,4 +247,98 @@ test("repository-wide dismissal takes precedence over detection state while sele
     normalizeGitHubCodeScanningAlerts([imported]).findings[0]!.evidence.details!
       .source_status,
   ).toBe("open");
+});
+
+test.each(["security/code-scanning", "code-scanning"])(
+  "code-scanning accepts the %s HTML route without changing identity or repository binding",
+  (route) => {
+    const original = importedAlert();
+    const imported = structuredClone(original);
+    imported.url = `https://github.com/example/project/${route}/12`;
+    imported.alert.html_url = imported.url;
+    const result = normalizeGitHubCodeScanningAlerts([imported]);
+    expect(result.excluded).toEqual([]);
+    expect(result.findings[0]!.source_finding_id).toBe(
+      normalizeGitHubCodeScanningAlerts([original]).findings[0]!
+        .source_finding_id,
+    );
+    expect(result.findings[0]!.evidence.source_data as unknown).toEqual(
+      imported,
+    );
+    imported.repository = "example/other";
+    expect(normalizeGitHubCodeScanningAlerts([imported]).excluded).toHaveLength(
+      1,
+    );
+    imported.repository = original.repository;
+    imported.url = `https://github.com/example/project/${route}/13`;
+    imported.alert.html_url = imported.url;
+    expect(normalizeGitHubCodeScanningAlerts([imported]).excluded).toHaveLength(
+      1,
+    );
+  },
+);
+
+test("real GitHub readers and mappings preserve explicit ports in repository evidence and identities", async () => {
+  const codeIds = new Set<string>();
+  const advisoryIds = new Set<string>();
+  for (const port of ["", ":443", ":8443"]) {
+    const host = `git.example.test${port}`;
+    const alert = importedAlert("refs/heads/main", host);
+    const advisory = importedAdvisory();
+    advisory.githubHost = host;
+    advisory.url = advisory.advisory.html_url = advisory.url.replace(
+      "github.com",
+      host,
+    );
+    const github = new Octokit({
+      request: {
+        fetch: async (resource: Parameters<typeof fetch>[0]) => {
+          const url = new URL(
+            resource instanceof Request ? resource.url : resource,
+          );
+          return Response.json(
+            url.pathname.includes("code-scanning")
+              ? alert.alert
+              : advisory.advisory,
+          );
+        },
+      },
+    });
+    const dependency = {
+      createGitHub: async (selectedHost: string) => {
+        expect(selectedHost).toBe(host);
+        return github;
+      },
+    };
+    const importedAlerts = await importGitHubCodeScanningAlerts(
+      { repository: alert.repository, alertNumbers: [12], githubHost: host },
+      dependency,
+    );
+    const code = normalizeGitHubCodeScanningAlerts(importedAlerts);
+    const importedAdvisories = await importGitHubAdvisories(
+      {
+        repository: advisory.repository,
+        advisoryIds: [advisory.ghsaId],
+        githubHost: host,
+      },
+      dependency,
+    );
+    const disclosed = normalizeGitHubAdvisories(importedAdvisories);
+    expect(code.excluded).toEqual([]);
+    expect(disclosed.excluded).toEqual([]);
+    for (const result of [code, disclosed])
+      expect(result.findings[0]!.evidence.details!.repository!.url).toBe(
+        `https://${host}/example/project`,
+      );
+    expect(code.findings[0]!.evidence.source_data as unknown).toEqual(
+      importedAlerts[0],
+    );
+    expect(disclosed.findings[0]!.evidence.source_data as unknown).toEqual(
+      importedAdvisories[0],
+    );
+    codeIds.add(code.findings[0]!.source_finding_id);
+    advisoryIds.add(disclosed.findings[0]!.source_finding_id);
+  }
+  expect(codeIds.size).toBe(3);
+  expect(advisoryIds.size).toBe(3);
 });

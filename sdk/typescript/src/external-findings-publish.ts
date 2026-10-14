@@ -297,6 +297,13 @@ export async function prepareNormalizedExternalPublication(
 ): Promise<PreparedExternalPublication> {
   // Validation adds Cloud defaults; leave the caller's objects unchanged.
   const current = structuredClone(input);
+  // structuredClone preserves aliases. Detach every raw record before adding
+  // typed defaults, including aliases shared with another finding's evidence.
+  for (const finding of current.findings)
+    if (finding.evidence.source_data !== undefined)
+      finding.evidence.source_data = structuredClone(
+        finding.evidence.source_data,
+      );
   const identities = new Set<string>();
   for (const finding of current.findings) {
     const id = finding.source_finding_id;

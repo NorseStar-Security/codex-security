@@ -28,6 +28,18 @@ function repositoryName(value: unknown): string {
   return repository!;
 }
 
+function sourceUrl(value: string): {
+  parsed: URL;
+  host: string;
+  origin: string;
+} {
+  const parsed = new URL(value);
+  const origin = /^(https?:\/\/([^/?#]+))/iu.exec(value);
+  if (!origin) throw new Error("GitHub evidence URL must be an HTTP(S) link.");
+  // URL.origin/host remove explicit default ports; Cloud keeps those distinct.
+  return { parsed, host: origin[2]!.toLowerCase(), origin: origin[1]! };
+}
+
 function sourceTimestamp(value: unknown): number | null {
   if (value === undefined || value === null) return null;
   const seconds = typeof value === "string" ? Date.parse(value) / 1000 : NaN;
@@ -61,10 +73,13 @@ function codeScanningFinding(record: Record<string, unknown>): ExternalFinding {
   const url = text(record["url"]);
   if (!url || url !== alert["html_url"])
     throw new Error("GitHub alert URL must match the original alert.");
-  const parsedUrl = new URL(url);
+  const { parsed: parsedUrl, host, origin } = sourceUrl(url);
   if (
-    parsedUrl.pathname.toLowerCase() !==
-    `/${repository}/security/code-scanning/${number}`.toLowerCase()
+    !["security/code-scanning", "code-scanning"].some(
+      (route) =>
+        parsedUrl.pathname.toLowerCase() ===
+        `/${repository}/${route}/${number}`.toLowerCase(),
+    )
   )
     throw new Error(
       "GitHub alert URL does not match the selected repository and alert.",
@@ -94,7 +109,7 @@ function codeScanningFinding(record: Record<string, unknown>): ExternalFinding {
     ),
   ];
   const path = text(location?.["path"]);
-  const sourceId = `${parsedUrl.host.toLowerCase()}/${repository.toLowerCase()}/code-scanning/${number}/${hash("sha256", ref)}`;
+  const sourceId = `${host}/${repository.toLowerCase()}/code-scanning/${number}/${hash("sha256", ref)}`;
   return {
     source_finding_id: sourceId,
     evidence: validateExternalEvidence({
@@ -115,7 +130,7 @@ function codeScanningFinding(record: Record<string, unknown>): ExternalFinding {
       details: {
         kind: "sast",
         repository: {
-          url: `${parsedUrl.origin}/${repository}`,
+          url: `${origin}/${repository}`,
           name: repository,
         },
         // Dismissal covers every branch; detection state belongs to the selected ref.
@@ -152,7 +167,7 @@ function advisoryFinding(record: Record<string, unknown>): ExternalFinding {
   const url = text(record["url"]);
   if (!url || url !== advisory["html_url"])
     throw new Error("GitHub advisory URL must match the original advisory.");
-  const parsedUrl = new URL(url);
+  const { parsed: parsedUrl, host: linkHost, origin } = sourceUrl(url);
   const host = text(record["githubHost"])?.toLowerCase();
   // Enterprise APIs may return the public advisory database's canonical link.
   const canonicalGlobalLink =
@@ -163,7 +178,7 @@ function advisoryFinding(record: Record<string, unknown>): ExternalFinding {
       : `/advisories/${id}`;
   if (
     !host ||
-    (parsedUrl.host.toLowerCase() !== host && !canonicalGlobalLink) ||
+    (linkHost !== host && !canonicalGlobalLink) ||
     parsedUrl.pathname.toLowerCase() !== expectedPath.toLowerCase()
   )
     throw new Error(
@@ -223,7 +238,7 @@ function advisoryFinding(record: Record<string, unknown>): ExternalFinding {
         ...(selection === "repository"
           ? {
               repository: {
-                url: `${parsedUrl.origin}/${repository}`,
+                url: `${origin}/${repository}`,
                 name: repository,
               },
             }

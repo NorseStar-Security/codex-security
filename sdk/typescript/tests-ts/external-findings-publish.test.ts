@@ -2615,3 +2615,106 @@ test("normalized publication omits only new null fields to match canonical Cloud
   expect(wiz.preview.findings[0]!.evidence.details!.scanner_origin).toBeNull();
   expect((await wiz.publish()).verified).toBe(1);
 });
+
+test("normalized SDK publication detaches raw evidence aliases before validating every finding", async () => {
+  const f = await fixture();
+  const sharedPackage = { name: "example-package" };
+  const input = {
+    read: 2,
+    findings: [
+      {
+        source_finding_id: "shared-first",
+        evidence: {
+          title: "First report",
+          severity: "high" as const,
+          packages: [sharedPackage],
+          source_data: { package: sharedPackage },
+        },
+      },
+      {
+        source_finding_id: "shared-second",
+        evidence: {
+          title: "Second report",
+          severity: "high" as const,
+          source_data: { earlier_package: sharedPackage },
+        },
+      },
+    ],
+    excluded: [],
+  };
+  const original = JSON.stringify(input);
+  const prepared = await prepareNormalizedExternalPublication(
+    input,
+    options,
+    f.deps,
+  );
+  expect(JSON.stringify(input)).toBe(original);
+  expect(prepared.preview.findings[0]!.evidence.source_data).toEqual({
+    package: { name: "example-package" },
+  });
+  expect(prepared.preview.findings[1]!.evidence.source_data).toEqual({
+    earlier_package: { name: "example-package" },
+  });
+  await writeFile(f.file, JSON.stringify(input.findings));
+  const fromFile = await prepareExternalPublication(f.file, options, f.deps);
+  expect(prepared.preview.findings).toEqual(fromFile.preview.findings);
+});
+
+test.each(["code-scanning", "advisory"])(
+  "%s imports bind an explicit default port to the matching Cloud repository",
+  async (family) => {
+    const alert = importedAlert("refs/heads/main", "github.com:443");
+    const advisory = importedAdvisory();
+    advisory.githubHost = "github.com:443";
+    advisory.url = advisory.advisory.html_url = advisory.url.replace(
+      "github.com",
+      advisory.githubHost,
+    );
+    const f = await fixture([family === "code-scanning" ? alert : advisory]);
+    const selected = { ...options, provider: "github" as const };
+    await expect(
+      prepareExternalPublication(f.file, selected, f.deps),
+    ).rejects.toThrow("does not match the selected Cloud repository");
+    expect(f.posts).toHaveLength(0);
+    const matching = {
+      ...f.deps,
+      fetch: async (url: string, init: RequestInit) => {
+        const response = await f.deps.fetch(url, init);
+        if (new URL(url).pathname.endsWith("/repositories")) {
+          const body = await response.json();
+          body.data[0].url = "https://github.com:443/example/project";
+          return Response.json(body);
+        }
+        return response;
+      },
+    };
+    const result = await (
+      await prepareExternalPublication(f.file, selected, matching)
+    ).publish();
+    expect(result.counts.created).toBe(1);
+    expect(result.verified).toBe(1);
+  },
+);
+
+test("normalized SDK publication rejects nonfinite raw evidence without JSON coercion", async () => {
+  const f = await fixture();
+  const input = {
+    read: 1,
+    findings: [
+      {
+        source_finding_id: "nonfinite-raw-evidence",
+        evidence: {
+          title: "Synthetic evidence",
+          severity: "high" as const,
+          source_data: { score: Infinity },
+        },
+      },
+    ],
+    excluded: [],
+  };
+  await expect(
+    prepareNormalizedExternalPublication(input, options, f.deps),
+  ).rejects.toThrow("finite JSON numbers");
+  expect(input.findings[0]!.evidence.source_data.score).toBe(Infinity);
+  expect(f.posts).toHaveLength(0);
+});
