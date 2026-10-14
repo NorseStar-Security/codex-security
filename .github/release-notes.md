@@ -259,6 +259,7 @@
 - bump actions/download-artifact from 8.0.1 to 8.0.2 ([#1650](https://github.com/openai/codex-security/pull/1650))
 - update Docker-in-Docker and Node devcontainer features ([#1530](https://github.com/openai/codex-security/pull/1530))
 - bump the third-party group across 2 directories with 2 updates ([#1652](https://github.com/openai/codex-security/pull/1652))
+- open read-only SQLite databases from Windows UNC paths ([#1648](https://github.com/openai/codex-security/pull/1648))
 
 <!-- release-section: highlights:end -->
 
