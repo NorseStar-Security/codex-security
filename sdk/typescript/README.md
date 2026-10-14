@@ -228,17 +228,16 @@ Constructor options are `codexOverrides`, `pythonPath`, and `pluginPath`.
 The bundled runtime and plugin are used by default. `pythonPath` overrides the
 `PYTHON` environment variable. To choose a model, set `codexOverrides.model`.
 
-Deep Scans with non-default provider selection or custom provider definitions
-require a plugin that supports per-scan worker provider snapshots. Older custom plugins
-fail before starting model work with an upgrade message; update the plugin or
-omit `pluginPath` to use the bundled version. Older custom plugins remain usable
-for standard scans and Deep Scans that inherit native provider configuration or
-explicitly select the built-in OpenAI provider without custom provider definitions
-when their workers forward that selection or native configuration selects the
-same effective provider for both the parent and workers. Otherwise, the scan
-stops before model work with the plugin upgrade message.
-When no provider is selected, discovery, reducer, and resumed workers inherit the
-same native configuration as the parent.
+New and resumed Deep Scans require a current plugin with
+`directDeepScanEngine: 1`, `workerProviderSnapshot: 4`, and isolated worker
+configuration support. Older custom plugins fail before scan execution; update
+the plugin or omit `pluginPath` to use the bundled version. Discovery, reducer,
+and resumed workers inherit per-scan provider, authentication, environment, and
+executable settings, with their existing read-only permissions. Reading saved
+reports does not require these execution capabilities.
+
+The SDK no longer adapts the older `node ./mcp/server.mjs` MCP entrypoint; use
+the current shell or Windows launcher for runtime-root routing.
 
 Custom plugins must support the current workbench protocol for scan comparison
 and archival. Update an older custom plugin or omit `pluginPath` to use the
@@ -392,6 +391,71 @@ To validate GitHub code scanning alerts, first import them with
 `importGitHubCodeScanningAlerts()`. See the
 [import guide](docs/cli.md#import-alerts-from-the-cli) for CLI and SDK examples.
 
+### Generate and verify a patch
+
+`patch()` runs the bundled remediation workflow non-interactively against a
+workspace that the caller has intentionally made writable:
+
+```ts
+const security = new CodexSecurity();
+try {
+  const result = await security.patch({
+    repositoryPath: "/path/to/disposable/workspace",
+    finding: {
+      title: "Possible SQL injection",
+      summary: "User input reaches a raw SQL query.",
+      locations: [{ path: "src/query.ts", startLine: 42 }],
+    },
+    signal,
+    onActivity(activity) {
+      console.log(activity.description);
+    },
+    onCost(cost) {
+      console.log(cost.estimatedUsd);
+    },
+  });
+
+  switch (result.status) {
+    case "verified":
+    case "no_change":
+      console.log(result.verificationReport);
+      break;
+    case "blocked":
+    case "failed":
+      console.error(result.reason);
+      break;
+  }
+} finally {
+  await security.close();
+}
+```
+
+Pass literal finding text or a JSON-serializable object; strings are never read
+as file paths. Sandboxed patch commands may edit only `repositoryPath` and run
+without network access or web search. Patch workspaces are always treated as
+untrusted Codex projects, so repository-local Codex configuration and MCP
+servers are not loaded. Host-configured tools retain their host permissions.
+The method does not create a commit, push, open a pull request, publish findings,
+change remote finding state, or add a scan to history.
+Callers remain responsible for reviewing and deriving the authoritative diff,
+approval, commit creation, and delivery.
+
+The discriminated result reports `verified`, `no_change`, `blocked`, or
+`failed`, plus repository-relative `changedFiles`, `threadId`, and estimated
+`cost` when model pricing and usage are available. Verified and no-change
+results include `verificationReport`; blocked and failed results include
+`reason`. Transport, authentication, cancellation, incomplete turns, and
+malformed results reject the promise. Failed, blocked, or interrupted operations
+can leave partial workspace changes for the caller to inspect or discard.
+
+`changedFiles` is model-reported metadata, not the authoritative diff.
+Patch-risk assessment is not included in this API.
+
+Patch operations reuse constructor configuration and credentials. Pass `auth`,
+`safetyIdentifier`, `model`, or `reasoningEffort` for per-call selection.
+`onActivity`, `onSessionEvent`, `onCost`, `onReconnect`, `onAuthentication`,
+`onWarning`, and `onObserverError` use the same observer contracts as scans.
+
 ## CLI
 
 After [installing the CLI](#install-the-cli), sign in if needed:
@@ -427,7 +491,8 @@ cs scan . --dry-run
 
 Use `--help` to find commands and `<command> --help` for options. Scans are
 report-only by default. Add `--fail-on-severity high` to return exit code `1`
-for high or critical findings; incomplete scans and execution failures return `2`.
+for high or critical findings; execution and required-output failures return `2`.
+Scope exclusions and follow-up notes do not change a completed scan's exit code.
 
 The [CLI reference](docs/cli.md) covers scan history, reruns, bulk and component
 scans, custom validation, imports, patching, and integrations.
@@ -477,7 +542,8 @@ checkpointing, and publication behavior.
 ### Suggest finding owners
 
 Use `suggest-owners` or the SDK's `suggestOwners()` to suggest contributors based
-on source and Git history. Suggestions do not assign tickets. See
+on CODEOWNERS, source, and Git history. Declared owners take priority over Git
+contributors. Suggestions do not assign tickets. See
 [owner suggestions](docs/cli.md#suggest-finding-owners) for input and output examples.
 
 ### Publish findings to Cloud
