@@ -254,6 +254,8 @@
 - prevent generated finding IDs from breaking later draft updates ([#1636](https://github.com/openai/codex-security/pull/1636))
 - generate patches without managing a CLI process ([#1635](https://github.com/openai/codex-security/pull/1635))
 - simplify scan outcomes ([#1633](https://github.com/openai/codex-security/pull/1633))
+- bump actions/upload-artifact from 7.0.1 to 7.0.2 ([#1647](https://github.com/openai/codex-security/pull/1647))
+- bump actions/setup-node from 7.0.0 to 7.1.0 ([#1651](https://github.com/openai/codex-security/pull/1651))
 
 <!-- release-section: highlights:end -->
 
