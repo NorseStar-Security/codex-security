@@ -44,6 +44,8 @@ const distModules = [
   "finding-catalogue",
   "findings-import",
   "github",
+  "github-advisories",
+  "github-findings",
   "index",
   "import-scan",
   "knowledge-base",

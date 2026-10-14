@@ -184,6 +184,16 @@ export type {
   ImportRepository,
   SourceReport,
 } from "./external-import-models.js";
+export {
+  normalizeGitHubCodeScanningAlerts,
+  normalizeGitHubAdvisories,
+  readGitHubFindings,
+} from "./github-findings.js";
+export { importGitHubAdvisories } from "./github-advisories.js";
+export type {
+  GitHubAdvisoryImportOptions,
+  ImportedGitHubAdvisory,
+} from "./github-advisories.js";
 export { importGitHubCodeScanningAlerts } from "./github.js";
 export type {
   GitHubCodeScanningImportOptions,

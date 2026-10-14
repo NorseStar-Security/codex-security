@@ -183,6 +183,28 @@ export function validateExternalEvidence(
     )
       throw new Error("Locations must use repository-relative paths.");
   }
+  const details = result.details;
+  if (details) {
+    if (details.kind === "advisory") {
+      if (!details.advisory)
+        throw new Error("Advisory evidence requires its source context.");
+      if (details.advisory.source === "global" && details.repository)
+        throw new Error(
+          "Global advisory evidence cannot claim a source repository.",
+        );
+      if (details.advisory.source === "repository" && !details.repository)
+        throw new Error(
+          "Repository advisory evidence requires its source repository.",
+        );
+    } else {
+      if (!details.repository)
+        throw new Error(
+          "Repository finding evidence requires its source repository.",
+        );
+      if (details.advisory)
+        throw new Error("Advisory source context requires advisory evidence.");
+    }
+  }
   const endLine = result.details?.code?.end_line;
   if (endLine !== null && endLine !== undefined) {
     const firstLine = result.locations?.[0]?.line;
@@ -193,7 +215,7 @@ export function validateExternalEvidence(
   }
   const urls = [
     result.url,
-    result.details?.repository.url,
+    result.details?.repository?.url,
     result.details?.file_url,
   ];
   for (const value of urls) {

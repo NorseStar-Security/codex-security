@@ -21,6 +21,7 @@ import {
   prepareNormalizedExternalPublication,
   type ExternalPublicationProgress,
 } from "../src/external-findings-publish.js";
+import { readGitHubFindings } from "../src/github-findings.js";
 import { readVendorFindings } from "../src/wiz-findings.js";
 import {
   validateExternalEvidence,
@@ -34,6 +35,10 @@ import type {
 } from "../src/external-import-models.js";
 import { main } from "../src/cli.js";
 import { dependencies } from "./cli-fixtures.js";
+import {
+  importedAlert,
+  importedAdvisory,
+} from "./support/github-import-fixtures.js";
 import { createCliTest } from "./support/cli-run.js";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -574,7 +579,7 @@ test("Wiz network-scan findings are excluded without requiring a detection metho
 });
 
 test("unsupported records are visible exclusions; duplicate identities and unfinished pages stop publication", async () => {
-  const f = await fixture([normalized(), normalized("unknown", "unknown")]);
+  const f = await fixture([normalized(), normalized("unknown", "unsupported")]);
   const parsed = await readVendorFindings(f.file);
   expect(parsed.findings).toHaveLength(1);
   expect(parsed.excluded).toHaveLength(1);
@@ -841,7 +846,10 @@ test.each(["human", "json"])(
         source_data: { id: "vendor-selected", note: "Original vendor detail" },
       },
     };
-    const f = await fixture([selected, normalized("unsupported", "unknown")]);
+    const f = await fixture([
+      selected,
+      normalized("unsupported", "unsupported"),
+    ]);
     const cli = createCliTest(main);
     let prompted = false;
     expect(
@@ -2017,7 +2025,7 @@ test("unsafe evidence integers are rejected while exact strings and safe integer
 
 test("mixed valid and rejected input reports partial completion with exit code 1", async () => {
   const f = await fixture([
-    normalized("invalid", "unknown"),
+    normalized("invalid", "unsupported"),
     normalized("valid"),
   ]);
   const cli = createCliTest(main);
@@ -2035,7 +2043,7 @@ test("mixed valid and rejected input reports partial completion with exit code 1
 
 test("server item failures identify the vendor record after local exclusions", async () => {
   const f = await fixture([
-    normalized("invalid", "unknown"),
+    normalized("invalid", "unsupported"),
     normalized("rejected-vendor"),
   ]);
   f.state.finalError = true;
@@ -2413,4 +2421,135 @@ test("normalized SDK publication preserves caller evidence and exclusion account
   expect(result.counts.created).toBe(1);
   expect(result.excluded).toEqual(input.excluded);
   expect(result.verified).toBe(1);
+});
+
+test("GitHub publication previews, imports, re-imports, updates and resumes selected-ref evidence", async () => {
+  const imported = importedAlert();
+  const f = await fixture([imported]);
+  const githubOptions = {
+    ...options,
+    provider: "github" as const,
+    sourceKey: "github.com/example/project/code-scanning",
+  };
+  const command = f.command.map((arg) =>
+    arg === "wiz"
+      ? "github"
+      : arg === options.sourceKey
+        ? githubOptions.sourceKey
+        : arg,
+  );
+  const cli = createCliTest(main);
+  expect(
+    await cli.runCli([...command, "--dry-run", "--format", "json"], f.cliDeps),
+  ).toBe(0);
+  expect(f.posts).toHaveLength(0);
+  expect(JSON.parse(cli.stdout.text()).source.provider).toBe("github");
+  const first = await (
+    await prepareExternalPublication(f.file, githubOptions, f.deps)
+  ).publish();
+  expect(first.counts.created).toBe(1);
+  expect(first.verified).toBe(1);
+  const repeated = await (
+    await prepareExternalPublication(f.file, githubOptions, f.deps)
+  ).publish();
+  expect(repeated.counts.unchanged).toBe(1);
+  imported.alert.most_recent_instance.state = "fixed";
+  await writeFile(f.file, JSON.stringify([imported]));
+  f.state.loseResponse = true;
+  await expect(
+    (await prepareExternalPublication(f.file, githubOptions, f.deps)).publish(),
+  ).rejects.toBeInstanceOf(ExternalPublicationError);
+  const prepared = await prepareExternalPublication(
+    f.file,
+    githubOptions,
+    f.deps,
+  );
+  expect(prepared.preview.resumed).toBe(true);
+  const resumed = await prepared.publish();
+  expect(resumed.counts.updated).toBe(1);
+  expect(resumed.verified).toBe(1);
+  expect([...f.reports.values()][0]).toMatchObject({
+    source: { provider: "github" },
+    evidence: { details: { source_status: "fixed" }, source_data: imported },
+    assessment: { state: "not_assessed" },
+  });
+  await writeFile(f.file, JSON.stringify([importedAlert("refs/heads/review")]));
+  const differentRef = await (
+    await prepareExternalPublication(f.file, githubOptions, f.deps)
+  ).publish();
+  expect(differentRef.counts.created).toBe(1);
+  expect(f.reports.size).toBe(2);
+});
+
+test("GitHub imports reject a different Cloud destination before uploading", async () => {
+  const imported = importedAlert("refs/heads/main", "git.example.test");
+  const f = await fixture([imported]);
+  await expect(
+    prepareExternalPublication(
+      f.file,
+      { ...options, provider: "github" },
+      f.deps,
+    ),
+  ).rejects.toThrow("does not match the selected Cloud repository");
+  expect(f.posts).toHaveLength(0);
+});
+
+test("global GHSA publication retains unassessed applicability through repeat import and withdrawal", async () => {
+  const imported = importedAdvisory("global");
+  const f = await fixture([imported]);
+  const selected = {
+    ...options,
+    provider: "github" as const,
+    sourceKey: "github.com/example/project/security-advisories",
+  };
+  expect(
+    (
+      await (
+        await prepareExternalPublication(f.file, selected, f.deps)
+      ).publish()
+    ).counts.created,
+  ).toBe(1);
+  expect(
+    (
+      await (
+        await prepareExternalPublication(f.file, selected, f.deps)
+      ).publish()
+    ).counts.unchanged,
+  ).toBe(1);
+  const withdrawn = {
+    ...imported,
+    advisory: { ...imported.advisory, withdrawn_at: "2026-01-03T00:00:00Z" },
+  };
+  await writeFile(f.file, JSON.stringify([withdrawn]));
+  const result = await (
+    await prepareExternalPublication(f.file, selected, f.deps)
+  ).publish();
+  expect(result.counts.updated).toBe(1);
+  expect(result.verified).toBe(1);
+  const report = [...f.reports.values()][0]!;
+  expect(report.evidence.details).toMatchObject({
+    kind: "advisory",
+    advisory: { source: "global" },
+    source_status: "withdrawn",
+  });
+  expect(report.evidence.details).not.toHaveProperty("repository");
+  expect(report.assessment?.state).toBe("not_assessed");
+  expect(report.evidence.packages![0]!.installed_version).toBeNull();
+});
+
+test("saved GitHub JSONL and gzip preserve evidence while malformed UTF-8 cannot change identities", async () => {
+  const imported = [importedAlert(), importedAdvisory("global")];
+  const f = await fixture(imported);
+  const jsonl = imported.map((record) => JSON.stringify(record)).join("\n");
+  for (const bytes of [Buffer.from(jsonl), gzipSync(jsonl)]) {
+    await writeFile(f.file, bytes);
+    const parsed = await readGitHubFindings(f.file);
+    expect(parsed.read).toBe(2);
+    expect(parsed.excluded).toEqual([]);
+    expect(
+      parsed.findings.map((finding) => finding.evidence.source_data) as unknown,
+    ).toEqual(imported);
+  }
+  await writeFile(f.file, Buffer.from([0xff]));
+  await expect(readGitHubFindings(f.file)).rejects.toThrow("UTF-8");
 });
