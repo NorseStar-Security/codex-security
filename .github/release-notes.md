@@ -248,6 +248,7 @@
 - stop Deep Scan from starting extra reviews during result checks ([#1630](https://github.com/openai/codex-security/pull/1630))
 - Python cache files break plugin integrity checks ([#1625](https://github.com/openai/codex-security/pull/1625))
 - complete Deep scans with missing optional writeups ([#1624](https://github.com/openai/codex-security/pull/1624))
+- fix image pull failures and Windows diagnostic test ([#1641](https://github.com/openai/codex-security/pull/1641))
 
 <!-- release-section: highlights:end -->
 
