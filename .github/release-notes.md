@@ -252,6 +252,7 @@
 - stop Deep Scan workers when usage is exhausted ([#1638](https://github.com/openai/codex-security/pull/1638))
 - show why configuration files fail to load ([#1634](https://github.com/openai/codex-security/pull/1634))
 - prevent generated finding IDs from breaking later draft updates ([#1636](https://github.com/openai/codex-security/pull/1636))
+- generate patches without managing a CLI process ([#1635](https://github.com/openai/codex-security/pull/1635))
 
 <!-- release-section: highlights:end -->
 
