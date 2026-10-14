@@ -264,6 +264,7 @@
 - rename display surfaces to Codex Security Local ([#1644](https://github.com/openai/codex-security/pull/1644))
 - update napi and napi-derive native dependencies ([#1646](https://github.com/openai/codex-security/pull/1646))
 - read saved Cloud findings in Codex ([#1422](https://github.com/openai/codex-security/pull/1422))
+- return pull request details for supplied-issue patches ([#1645](https://github.com/openai/codex-security/pull/1645))
 
 <!-- release-section: highlights:end -->
 

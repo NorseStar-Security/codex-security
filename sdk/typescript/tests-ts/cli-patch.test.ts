@@ -893,6 +893,7 @@ describe("scan and patch workflow", () => {
           "lin_api_SYNTHETIC",
           "--assess-patch-risk",
           "--create-pr",
+          "--json",
         ],
         {
           currentDirectory: repository,
@@ -980,6 +981,9 @@ describe("scan and patch workflow", () => {
       ]);
       expect(outcome.stderr).toContain("Patch risk assessment:");
       expect(outcome.stderr).toContain(`Pull request: ${url}`);
+      expect(JSON.parse(outcome.stdout)).toMatchObject({
+        pullRequest: { branch: "codex-security/patch-SEC-123", url },
+      });
       expect(pullRequestArguments.at(-1)).not.toContain("schemaVersion");
       expect(pullRequestArguments.at(-1)).not.toContain(
         "codex-security:patch-risk-summary",

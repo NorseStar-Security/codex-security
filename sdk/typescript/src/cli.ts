@@ -5418,9 +5418,10 @@ export async function main(
                 dependencies,
               )
             : undefined;
+          let pullRequest: { branch: string; url: string } | undefined;
           if (options.createPr) {
             const identifier = directPatchIdentifier(positionals, imports);
-            await createPatchPullRequest(
+            pullRequest = await createPatchPullRequest(
               repository,
               identifier ?? directPatchDigest(positionals, imports),
               files,
@@ -5436,6 +5437,7 @@ export async function main(
             return {
               ...patchResult,
               ...(jsonOutput ? { report: report.text() } : {}),
+              ...(pullRequest === undefined ? {} : { pullRequest }),
             };
         } catch (error) {
           if (exitCode === 0) exitCode = 2;
