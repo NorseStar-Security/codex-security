@@ -261,6 +261,8 @@
 - bump the third-party group across 2 directories with 2 updates ([#1652](https://github.com/openai/codex-security/pull/1652))
 - open read-only SQLite databases from Windows UNC paths ([#1648](https://github.com/openai/codex-security/pull/1648))
 - prioritize CODEOWNERS in owner suggestions ([#1519](https://github.com/openai/codex-security/pull/1519))
+- rename display surfaces to Codex Security Local ([#1644](https://github.com/openai/codex-security/pull/1644))
+- update napi and napi-derive native dependencies ([#1646](https://github.com/openai/codex-security/pull/1646))
 
 <!-- release-section: highlights:end -->
 
